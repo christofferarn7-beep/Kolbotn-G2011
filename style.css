@@ -107,6 +107,40 @@ p { margin: 0; }
   background: repeating-linear-gradient(90deg, var(--bla) 0 12px, var(--hvit) 12px 24px);
 }
 
+/* Forhåndsvisning for trenere */
+
+.visning {
+  position: sticky;
+  top: 60px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 8px 8px 16px;
+  background: var(--planlagt-bg);
+  color: var(--planlagt-tekst);
+  border-bottom: 1px solid #EFCDA6;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.visning p { margin: 0; }
+.visning strong { display: block; font-size: 15px; }
+
+.visning button {
+  flex: none;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1.5px solid currentColor;
+  border-radius: 999px;
+  background: var(--hvit);
+  color: var(--planlagt-tekst);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .innhold {
   max-width: 600px;
   margin: 0 auto;

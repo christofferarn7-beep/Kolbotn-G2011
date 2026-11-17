@@ -510,7 +510,9 @@ const UI = {
   fase: null,
   kodeResultat: null,
   melding: '',
-  forrigeRute: ''
+  forrigeRute: '',
+  visSom: null,
+  ekte: null
 };
 
 function nullstill() {
@@ -528,6 +530,8 @@ function nullstill() {
   UI.fase = null;
   UI.kodeResultat = null;
   UI.melding = '';
+  UI.visSom = null;
+  UI.ekte = null;
 }
 
 async function lastAlt() {
@@ -685,6 +689,7 @@ function ramme(aktiv, innhold) {
   return '<header class="topp"><a class="merke" href="#/uke"><img src="img/kolbotn-logo.png" alt="" width="26" height="32"><span>Kolbotn G2011</span></a>'
     + '<a class="ikonknapp" href="#/meg" aria-label="Min side">' + IKON.person + '</a></header>'
     + '<div class="striper" aria-hidden="true"></div>'
+    + visningsBanner()
     + '<main class="innhold" id="innhold">' + melding + innhold + '</main>'
     + '<nav class="fanebar' + (faner.length === 5 ? ' fem' : '') + '" aria-label="Hovedmeny">' + meny + '</nav>';
 }
@@ -1011,6 +1016,13 @@ function visTrener() {
       + '<button type="button" class="lenkeknapp" data-handling="lukk-kode">Ferdig</button></section>';
   }
 
+  html += '<section class="kort"><h2>Se siden som spiller eller forelder</h2>'
+    + '<p class="dempet liten">Du ser nøyaktig det de ser, med en oppdiktet spiller. Det du gjør der, blir ikke lagret.</p>'
+    + '<div class="to-kol">'
+    + '<button type="button" class="knapp sekundar" data-handling="vis-som" data-rolle="spiller">Spiller</button>'
+    + '<button type="button" class="knapp sekundar" data-handling="vis-som" data-rolle="forelder">Forelder</button>'
+    + '</div></section>';
+
   const spillerProfiler = t.profiler.filter((p) => p.role === 'spiller');
   const harKonto = new Set(spillerProfiler.map((p) => p.player_id));
   const aktiveSpillere = t.spillere.filter((s) => s.active);
@@ -1082,6 +1094,62 @@ function visTrener() {
   return html;
 }
 
+/* ---------- Forhåndsvisning for trenere ---------- */
+
+/*
+ * Trenerne kan se siden slik en spiller eller en forelder ser den. Visningen bruker en
+ * oppdiktet spiller og lagrer ingenting: alt skjer i nettleseren og forsvinner når treneren
+ * avslutter eller laster siden på nytt. Felles innhold (kalender, spillmodell, plan) er det
+ * ekte, og sider som bare er for trenere, tas bort slik databasen gjør for spillere og foreldre.
+ */
+const DEMO_SPILLER = { id: 'demo-spiller', full_name: 'Ola Nordmann', position: 'midtbane' };
+
+function demoHoyder() {
+  /* Siste måling litt over en måned tilbake, så påminnelsen vises slik gutta får den. */
+  return [[34, 171.6], [65, 170.9], [96, 170.4], [127, 169.8]].map(([dager, hoyde], i) => {
+    const tid = new Date(Date.now() - dager * DAG_MS);
+    return { id: 'demo-' + i, measured_on: osloDatoStr(tid), height_cm: hoyde, created_at: tid.toISOString() };
+  });
+}
+
+function visningsBanner() {
+  if (!UI.visSom) return '';
+  return '<div class="visning" role="status"><p><strong>Du ser siden som ' + (UI.visSom === 'spiller' ? 'spiller' : 'forelder') + '</strong>'
+    + 'Oppdiktet spiller. Ingenting lagres.</p>'
+    + '<button type="button" data-handling="avslutt-visning">Avslutt</button></div>';
+}
+
+function startVisning(rolle) {
+  if (!S.profil || S.profil.role !== 'trener' || UI.visSom) return;
+  if (rolle !== 'spiller' && rolle !== 'forelder') return;
+  UI.ekte = { profil: S.profil, sider: S.sider, spiller: S.spiller, samtykker: S.samtykker, hoyder: S.hoyder, barn: S.barn };
+  UI.visSom = rolle;
+  UI.kodeResultat = null;
+  S.sider = Object.fromEntries(Object.entries(S.sider).filter(([, side]) => side.audience === 'alle'));
+  if (rolle === 'spiller') {
+    S.profil = { id: 'demo-profil', username: 'ola.n', full_name: DEMO_SPILLER.full_name, role: 'spiller', player_id: DEMO_SPILLER.id };
+    S.spiller = DEMO_SPILLER;
+    S.samtykker = [{ player_id: DEMO_SPILLER.id, version: KONFIG.samtykkeVersjon, accepted_at: new Date().toISOString(), withdrawn_at: null }];
+    S.hoyder = demoHoyder();
+    S.barn = [];
+  } else {
+    S.profil = { id: 'demo-profil', username: 'kari.n', full_name: 'Kari Nordmann', role: 'forelder', player_id: null };
+    S.spiller = null;
+    S.samtykker = [];
+    S.hoyder = [];
+    S.barn = [DEMO_SPILLER];
+  }
+  gaTil(rolle === 'forelder' ? 'meg' : 'uke');
+}
+
+function avsluttVisning() {
+  if (!UI.visSom) return;
+  Object.assign(S, UI.ekte);
+  UI.ekte = null;
+  UI.visSom = null;
+  gaTil('trener');
+}
+
 /* ---------- Handlinger ---------- */
 
 function gaTil(rute) {
@@ -1134,6 +1202,13 @@ const SKJEMA = {
     if (!(hoyde >= 120 && hoyde <= 230)) throw new Error('Skriv høyden i centimeter, for eksempel 176,5.');
     const dato = d.dato || idagStr();
     if (dato > idagStr()) throw new Error('Datoen kan ikke være fram i tid.');
+    if (UI.visSom) {
+      const ny = { id: 'demo-' + Date.now(), measured_on: dato, height_cm: Math.round(hoyde * 10) / 10, created_at: new Date().toISOString() };
+      S.hoyder = [ny].concat(S.hoyder.filter((h) => h.measured_on !== dato)).sort((a, b) => b.measured_on.localeCompare(a.measured_on));
+      UI.melding = 'Forhåndsvisning: høyden er ikke lagret.';
+      tegn();
+      return;
+    }
     await api.rest('heights?on_conflict=player_id,measured_on', {
       metode: 'POST',
       prefer: 'resolution=merge-duplicates,return=minimal',
@@ -1145,6 +1220,7 @@ const SKJEMA = {
   },
 
   async 'bytt-passord'(d) {
+    if (UI.visSom) throw new Error('Du kan ikke bytte passord i forhåndsvisningen.');
     sjekkPassord(d.passord, d.passord2);
     await api.brukerOppdater({ password: d.passord });
     UI.melding = 'Passordet er byttet.';
@@ -1263,7 +1339,15 @@ async function vedKlikk(e) {
   } else if (h === 'fase') {
     UI.fase = el.dataset.navn;
     tegn();
+  } else if (h === 'vis-som') {
+    startVisning(el.dataset.rolle);
+  } else if (h === 'avslutt-visning') {
+    avsluttVisning();
   } else if (h === 'logg-ut') {
+    if (UI.visSom) {
+      alertFeil('Du ser siden som ' + UI.visSom + '. Trykk «Avslutt» øverst for å gå tilbake.');
+      return;
+    }
     await api.loggUt();
     nullstill();
     gaTil('');
@@ -1284,6 +1368,13 @@ async function vedKlikk(e) {
       el.textContent = 'Merk og kopier teksten';
     }
   } else if (h === 'samtykke-gi') {
+    if (UI.visSom) {
+      S.samtykker = S.samtykker.filter((c) => c.player_id !== el.dataset.spiller)
+        .concat([{ player_id: el.dataset.spiller, version: KONFIG.samtykkeVersjon, accepted_at: new Date().toISOString(), withdrawn_at: null }]);
+      UI.melding = 'Forhåndsvisning: samtykket er ikke lagret.';
+      tegn();
+      return;
+    }
     el.disabled = true;
     await utfor(async () => {
       const spiller = el.dataset.spiller;
@@ -1298,6 +1389,13 @@ async function vedKlikk(e) {
     });
   } else if (h === 'samtykke-trekk') {
     if (!window.confirm('Vil du trekke samtykket? Da kan spilleren ikke legge inn nye opplysninger.')) return;
+    if (UI.visSom) {
+      const naa = new Date().toISOString();
+      S.samtykker = S.samtykker.map((c) => (c.player_id === el.dataset.spiller && !c.withdrawn_at ? Object.assign({}, c, { withdrawn_at: naa }) : c));
+      UI.melding = 'Forhåndsvisning: samtykket er ikke endret.';
+      tegn();
+      return;
+    }
     el.disabled = true;
     await utfor(async () => {
       const filter = 'player_id=eq.' + encodeURIComponent(el.dataset.spiller) + '&parent_id=eq.' + encodeURIComponent(S.profil.id) + '&withdrawn_at=is.null';
@@ -1308,6 +1406,12 @@ async function vedKlikk(e) {
     });
   } else if (h === 'slett-hoyde') {
     if (!window.confirm('Slette denne målingen?')) return;
+    if (UI.visSom) {
+      S.hoyder = S.hoyder.filter((x) => x.id !== el.dataset.id);
+      UI.melding = 'Forhåndsvisning: målingen er ikke slettet.';
+      tegn();
+      return;
+    }
     await utfor(async () => {
       await api.rest('heights?id=eq.' + encodeURIComponent(el.dataset.id), { metode: 'DELETE', prefer: 'return=minimal' });
       await lastSpiller();
