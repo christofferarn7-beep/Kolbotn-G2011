@@ -34,6 +34,18 @@ const SONE = {
 const SONE_REKKEFOLGE = { 'rød': 0, 'gul': 1, 'mangler': 2, 'grønn': 3 };
 const SPESIELLE_SEKSJONER = ['grunnformasjon', 'felles språk', 'tekniske standarder'];
 
+/* Logg etter økt og utviklingsmål */
+const LOGG_TYPER = ['trening', 'fysisk', 'kamp', 'cup'];
+const LOGG_DAGER = 7;
+const SMERTE_NAVN = { nei: 'Nei', litt: 'Litt', mye: 'Mye' };
+const MAL_STATUS = {
+  aktiv: { navn: 'Aktiv', klasse: '' },
+  'nådd': { navn: 'Nådd', klasse: 'sone-gronn' },
+  delvis: { navn: 'Delvis', klasse: 'sone-gul' },
+  ikke_nådd: { navn: 'Ikke nådd', klasse: 'sone-mangler' }
+};
+const BRA_EKSEMPEL = ['F.eks. vant mange andreballer', 'F.eks. turte å bruke venstre', 'F.eks. snakket mye bakover'];
+
 const IKON = {
   hus: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>',
   kalender: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
@@ -322,6 +334,61 @@ function dagerSiden(datoStr) {
   return Math.round((datoFraStr(idagStr()) - datoFraStr(datoStr)) / DAG_MS);
 }
 
+function heltall(tekst) {
+  const t = String(tekst == null ? '' : tekst).trim();
+  return /^\d{1,3}$/.test(t) ? Number(t) : NaN;
+}
+
+function tekstFelt(verdi) {
+  const t = String(verdi == null ? '' : verdi).trim();
+  return t || null;
+}
+
+/* Parametre etter ? i adressen, for eksempel #/logg?okt=… */
+function ruteParam(navn) {
+  const i = location.hash.indexOf('?');
+  if (i < 0) return '';
+  return new URLSearchParams(location.hash.slice(i + 1)).get(navn) || '';
+}
+
+function minutterFor(h) {
+  if (!h.ends_at) return 75;
+  return Math.max(1, Math.round((new Date(h.ends_at) - new Date(h.starts_at)) / 60000));
+}
+
+/* Samme regel som i databasen: økta har startet, er ikke avlyst og sluttet for maks sju dager siden. */
+function kanLogges(h) {
+  const naa = Date.now();
+  return LOGG_TYPER.includes(h.kind) && h.status !== 'avlyst'
+    && new Date(h.starts_at).getTime() <= naa
+    && sluttTid(h).getTime() >= naa - LOGG_DAGER * DAG_MS;
+}
+
+/* Perioder spillerne kan sette mål for: den som pågår (eller neste) og perioden etter. */
+function apnePerioder() {
+  const idag = idagStr();
+  return S.perioder.filter((p) => p.end_date >= idag).slice(0, 2);
+}
+
+function periodeTittel(id) {
+  const p = S.perioder.find((x) => x.id === id);
+  if (!p) return id;
+  const pn = periodeNavn(p);
+  return pn.kort + ' – ' + pn.navn;
+}
+
+function belastning(l) {
+  return l.rpe * l.minutes;
+}
+
+function snitt(tall) {
+  return tall.length ? tall.reduce((a, b) => a + b, 0) / tall.length : 0;
+}
+
+function desimal(v) {
+  return TALL_FMT.format(v);
+}
+
 function sideAdresse() {
   return location.origin + location.pathname;
 }
@@ -500,6 +567,8 @@ const S = {
   spiller: null,
   samtykker: [],
   hoyder: [],
+  logger: [],
+  mal: [],
   barn: [],
   trener: null,
   lastFeil: ''
@@ -523,6 +592,8 @@ function nullstill() {
   S.spiller = null;
   S.samtykker = [];
   S.hoyder = [];
+  S.logger = [];
+  S.mal = [];
   S.barn = [];
   S.trener = null;
   S.lastFeil = '';
@@ -556,14 +627,18 @@ async function lastAlt() {
 
 async function lastSpiller() {
   const pid = encodeURIComponent(S.profil.player_id);
-  const [spillere, samtykker, hoyder] = await Promise.all([
+  const [spillere, samtykker, hoyder, logger, mal] = await Promise.all([
     api.rest('players?select=id,full_name,position&id=eq.' + pid),
     api.rest('consents?select=player_id,version,accepted_at,withdrawn_at&player_id=eq.' + pid),
-    api.rest('heights?select=id,measured_on,height_cm,created_at&player_id=eq.' + pid + '&order=measured_on.desc&limit=24')
+    api.rest('heights?select=id,measured_on,height_cm,created_at&player_id=eq.' + pid + '&order=measured_on.desc&limit=24'),
+    api.rest('session_logs?select=*&player_id=eq.' + pid + '&order=created_at.desc&limit=100'),
+    api.rest('goals?select=*&player_id=eq.' + pid + '&order=created_at.asc')
   ]);
   S.spiller = (spillere && spillere[0]) || null;
   S.samtykker = samtykker || [];
   S.hoyder = hoyder || [];
+  S.logger = logger || [];
+  S.mal = mal || [];
 }
 
 async function lastForelder() {
@@ -577,13 +652,16 @@ async function lastForelder() {
 }
 
 async function lastTrener() {
-  const [spillere, profiler, lenker, samtykker, koder, soner] = await Promise.all([
+  const fra = new Date(Date.now() - 120 * DAG_MS).toISOString();
+  const [spillere, profiler, lenker, samtykker, koder, soner, logger, mal] = await Promise.all([
     api.rest('players?select=id,full_name,position,active&order=full_name.asc'),
     api.rest('profiles?select=id,username,full_name,role,player_id&order=full_name.asc'),
     api.rest('parent_links?select=parent_id,player_id'),
     api.rest('consents?select=player_id,parent_id,version,accepted_at,withdrawn_at'),
     api.rest('invites?select=code,purpose,role,full_name,player_id,user_id,created_at,expires_at,used_at&order=created_at.desc&limit=300'),
-    api.rest('vekstsoner?select=*')
+    api.rest('vekstsoner?select=*'),
+    api.rest('session_logs?select=*&created_at=gte.' + encodeURIComponent(fra) + '&order=created_at.desc&limit=5000'),
+    api.rest('goals?select=*&order=created_at.asc')
   ]);
   S.trener = {
     spillere: spillere || [],
@@ -591,7 +669,9 @@ async function lastTrener() {
     lenker: lenker || [],
     samtykker: samtykker || [],
     koder: koder || [],
-    soner: soner || []
+    soner: soner || [],
+    logger: logger || [],
+    mal: mal || []
   };
 }
 
@@ -675,6 +755,9 @@ function visLastFeil() {
 
 /* ---------- Visninger: rammen ---------- */
 
+/* Undersider markerer fanen de hører til. */
+const FANE_FOR = { plan: 'spillmodell', logg: 'meg', mal: 'meg', okt: 'trener', spiller: 'trener' };
+
 function ramme(aktiv, innhold) {
   const faner = [
     ['uke', 'Denne uka', IKON.hus],
@@ -683,8 +766,9 @@ function ramme(aktiv, innhold) {
   ];
   if (S.profil.role === 'trener') faner.push(['trener', 'Trener', IKON.tavle]);
   faner.push(['meg', 'Meg', IKON.person]);
+  const fane = FANE_FOR[aktiv] || aktiv;
   const meny = faner.map(([rute, navn, ikon]) => '<a class="fane" href="#/' + rute + '"'
-    + (rute === aktiv || (aktiv === 'plan' && rute === 'spillmodell') ? ' aria-current="page"' : '') + '>' + ikon + esc(navn) + '</a>').join('');
+    + (rute === fane ? ' aria-current="page"' : '') + '>' + ikon + esc(navn) + '</a>').join('');
   const melding = UI.melding ? '<p class="varsel ok" role="status">' + esc(UI.melding) + '</p>' : '';
   return '<header class="topp"><a class="merke" href="#/uke"><img src="img/kolbotn-logo.png" alt="" width="26" height="32"><span>Kolbotn G2011</span></a>'
     + '<a class="ikonknapp" href="#/meg" aria-label="Min side">' + IKON.person + '</a></header>'
@@ -744,7 +828,7 @@ function visUke() {
       + '</div></section>';
   }
 
-  if (S.profil.role === 'spiller' && harSamtykke(S.profil.player_id)) html += hoydePaaminnelse();
+  if (S.profil.role === 'spiller' && harSamtykke(S.profil.player_id)) html += loggPaaminnelse() + hoydePaaminnelse();
 
   if (neste) {
     const d = dagInfo(neste.starts_at);
@@ -784,6 +868,28 @@ function hendelseRad(h) {
   const fakta = hendelseFakta(h);
   if (!fakta.length) return '<div class="rad">' + topp + '</div>';
   return '<details><summary class="rad">' + topp + '</summary><div class="detaljer">' + fakta.join('') + '</div></details>';
+}
+
+function loggFor(eventId) {
+  return S.logger.find((l) => l.event_id === eventId) || null;
+}
+
+/* Økter spilleren kan logge nå, nyeste først. */
+function loggbareOkter() {
+  return S.hendelser.filter(kanLogges).sort((a, b) => new Date(b.starts_at) - new Date(a.starts_at));
+}
+
+function loggPaaminnelse() {
+  const ulogget = loggbareOkter().filter((h) => !loggFor(h.id));
+  if (!ulogget.length) return '';
+  const h = ulogget[0];
+  const flere = ulogget.length - 1;
+  return '<section class="kort uthevet"><p class="overlinje">Logg økta</p>'
+    + '<p><strong>Hvordan var økta ' + esc(dagInfo(h.starts_at).lang.toLowerCase()) + '?</strong></p>'
+    + '<p class="dempet liten">Belastning fra 1 til 10, tre ting som var bra og én ting å bli bedre på. Det tar ett minutt.</p>'
+    + '<a class="knapp liten-knapp" href="#/logg?okt=' + esc(encodeURIComponent(h.id)) + '">Logg økta</a>'
+    + (flere ? '<p class="dempet liten">Du har ' + flere + (flere === 1 ? ' økt' : ' økter') + ' til som ikke er logget. Se «Meg».</p>' : '')
+    + '</section>';
 }
 
 function hoydePaaminnelse() {
@@ -927,11 +1033,102 @@ function visMeg() {
 }
 
 function megSpiller() {
-  const pid = S.profil.player_id;
-  if (!harSamtykke(pid)) {
-    return '<section class="kort tomt"><h2>Høyde</h2><p>Foresatte må gi samtykke før du kan legge inn høyden.</p>'
+  if (!harSamtykke(S.profil.player_id)) {
+    return megMal() + '<section class="kort tomt"><h2>Logg og høyde</h2><p>Foresatte må gi samtykke før du kan logge økter og legge inn høyden.</p>'
       + '<p class="dempet liten">Be dem logge inn med koden de har fått fra treneren, og godkjenne under «Meg».</p></section>';
   }
+  return megMal() + megOkter() + megHoyde();
+}
+
+/* Én blokk per mål. Spilleren og treneren ser det samme, treneren kan i tillegg kommentere. */
+function malBlokk(m, lenke, kommentarSkjema) {
+  const st = MAL_STATUS[m.status] || MAL_STATUS.aktiv;
+  return '<div class="mal">'
+    + '<div class="mal-topp"><p class="mal-tekst">' + esc(m.goal) + '</p>'
+    + '<span class="merkelapp ' + st.klasse + '">' + esc(st.navn) + '</span></div>'
+    + (m.how ? '<p class="liten"><span class="dempet">Slik:</span> ' + esc(m.how) + '</p>' : '')
+    + (m.reflection ? '<p class="liten"><span class="dempet">Hvordan det gikk:</span> ' + esc(m.reflection) + '</p>' : '')
+    + (m.coach_comment && !kommentarSkjema ? '<p class="trenerkommentar"><strong>Trener:</strong> ' + esc(m.coach_comment) + '</p>' : '')
+    + (kommentarSkjema
+      ? '<form class="skjema kommentar" data-skjema="trenerkommentar" novalidate><input type="hidden" name="id" value="' + esc(m.id) + '">'
+        + '<div class="felt"><label for="k-' + esc(m.id) + '">Kommentar fra trener</label>'
+        + '<textarea id="k-' + esc(m.id) + '" name="kommentar" maxlength="400" rows="2">' + esc(m.coach_comment || '') + '</textarea></div>'
+        + skjemafeil() + '<button class="knapp sekundar liten-knapp" type="submit">Lagre kommentar</button></form>'
+      : '')
+    + (lenke ? '<a class="lenkeknapp" href="' + esc(lenke) + '">Endre</a>' : '')
+    + '</div>';
+}
+
+function megMal() {
+  const apne = apnePerioder();
+  let html = '<section class="uke"><h2>Mine mål</h2>';
+  if (!apne.length) {
+    html += '<section class="kort tomt"><p class="dempet">Ingen periode å sette mål for akkurat nå.</p></section>';
+  }
+  apne.forEach((p, i) => {
+    const mal = S.mal.filter((m) => m.period_id === p.id);
+    const snart = (datoFraStr(p.start_date) - datoFraStr(idagStr())) / DAG_MS <= 10;
+    if (i > 0 && !mal.length && !snart) return;
+    const pn = periodeNavn(p);
+    html += '<div class="kort"><p class="overlinje">' + esc(pn.kort) + ' · ' + esc(periodeKortTekst(p)) + '</p>'
+      + '<h3>' + esc(pn.navn) + '</h3>'
+      + (p.focus ? '<p class="dempet liten">Periodens fokus: ' + esc(p.focus) + '</p>' : '')
+      + (mal.length
+        ? mal.map((m) => malBlokk(m, '#/mal?id=' + encodeURIComponent(m.id), false)).join('')
+        : '<p>Ingen mål ennå. Velg én til tre ting du vil bli bedre på i perioden.</p>')
+      + (mal.length < 3 ? '<a class="knapp liten-knapp" href="#/mal?periode=' + esc(encodeURIComponent(p.id)) + '">Nytt mål</a>' : '')
+      + '</div>';
+  });
+  const tidligere = S.mal.filter((m) => !apne.some((p) => p.id === m.period_id));
+  if (tidligere.length) {
+    const perioder = [...new Set(tidligere.map((m) => m.period_id))];
+    html += '<details class="kort"' + (perioder.some(kanEvaluere) ? ' open' : '') + '><summary class="lenkeknapp">Tidligere mål (' + tidligere.length + ')</summary>'
+      + perioder.map((id) => '<p class="overlinje">' + esc(periodeTittel(id)) + '</p>'
+        + (kanEvaluere(id) ? '<p class="dempet liten">Perioden er over. Gi hvert mål en status og skriv kort hvordan det gikk.</p>' : '')
+        + tidligere.filter((m) => m.period_id === id)
+          .map((m) => malBlokk(m, kanEvaluere(id) ? '#/mal?id=' + encodeURIComponent(m.id) : null, false)).join('')).join('')
+      + '</details>';
+  }
+  return html + '</section>';
+}
+
+/* Spillere kan gi status og skrive hvordan det gikk i to uker etter at perioden er over. */
+function kanEvaluere(periodeId) {
+  const p = S.perioder.find((x) => x.id === periodeId);
+  return Boolean(p) && dagerSiden(p.end_date) <= 14;
+}
+
+function megOkter() {
+  const naa = Date.now();
+  const okter = S.hendelser
+    .filter((h) => LOGG_TYPER.includes(h.kind) && h.status !== 'avlyst' && new Date(h.starts_at).getTime() <= naa
+      && sluttTid(h).getTime() >= naa - 28 * DAG_MS)
+    .sort((a, b) => new Date(b.starts_at) - new Date(a.starts_at))
+    .slice(0, 10);
+  let html = '<section class="uke"><h2>Mine økter</h2>';
+  if (!okter.length) {
+    const neste = S.hendelser.find((h) => LOGG_TYPER.includes(h.kind) && h.status !== 'avlyst' && new Date(h.starts_at).getTime() > naa);
+    return html + '<section class="kort tomt"><p>Etter hver økt logger du belastning og tre ting som var bra her.</p>'
+      + (neste ? '<p class="dempet liten">Neste økt: ' + esc(dagInfo(neste.starts_at).lang.toLowerCase()) + '.</p>' : '')
+      + '</section></section>';
+  }
+  html += '<div class="liste">' + okter.map((h) => {
+    const d = dagInfo(h.starts_at);
+    const l = loggFor(h.id);
+    const under = l
+      ? 'Belastning ' + l.rpe + ' · ' + l.minutes + ' min' + (l.pain !== 'nei' ? ' · ' + SMERTE_NAVN[l.pain].toLowerCase() + ' smerter' : '')
+      : (kanLogges(h) ? 'Ikke logget' : 'Ikke logget, fristen er ute');
+    const handling = kanLogges(h)
+      ? '<a class="lenkeknapp" href="#/logg?okt=' + esc(encodeURIComponent(h.id)) + '">' + (l ? 'Endre' : 'Logg') + '</a>'
+      : '';
+    return '<div class="rad"><div class="dato-blokk"><span class="dag">' + esc(d.kort) + '</span><span class="dato">' + esc(d.dato) + '</span></div>'
+      + '<div class="rad-tekst"><span class="navn">' + esc(h.title) + '</span><span class="under">' + esc(under) + '</span></div>'
+      + handling + '</div>';
+  }).join('') + '</div>';
+  return html + '</section>';
+}
+
+function megHoyde() {
   const siste = S.hoyder[0];
   const forrige = S.hoyder[1];
   let html = '<section class="kort"><div class="kort-topp"><h2>Høyde</h2>'
@@ -981,6 +1178,255 @@ function megForelder() {
       + '<details><summary class="lenkeknapp">Les hva samtykket gjelder</summary><div class="tekst-md">' + tekst + '</div></details>'
       + knapp + '</section>';
   }).join('');
+}
+
+/* ---------- Logg etter økt ---------- */
+
+function visLogg() {
+  const h = S.hendelser.find((x) => x.id === ruteParam('okt'));
+  let html = '<div class="overskrift"><p class="overlinje">Logg økta</p>'
+    + '<h1>' + (h ? esc(dagInfo(h.starts_at).lang) : 'Fant ikke økta') + '</h1>'
+    + (h ? '<p class="dempet">' + esc(h.title + ' · ' + tidTekst(h)) + '</p>' : '') + '</div>';
+  if (!h) return html + '<a class="knapp sekundar" href="#/meg">Til mine økter</a>';
+  if (!harSamtykke(S.profil.player_id)) {
+    return html + '<section class="kort tomt"><p>Foresatte må gi samtykke før du kan logge økter.</p>'
+      + '<p class="dempet liten">Be dem logge inn med koden de har fått fra treneren, og godkjenne under «Meg».</p></section>';
+  }
+  const logg = loggFor(h.id);
+  if (!kanLogges(h)) {
+    const grunn = h.status === 'avlyst' ? 'Økta er avlyst.'
+      : new Date(h.starts_at).getTime() > Date.now() ? 'Du kan logge økta når den har startet.'
+        : 'Det er mer enn ' + LOGG_DAGER + ' dager siden økta, så den kan ikke logges lenger.';
+    return html + '<section class="kort tomt"><p>' + esc(grunn) + '</p></section>'
+      + '<a class="knapp sekundar" href="#/meg">Til mine økter</a>';
+  }
+  const v = logg || {};
+  const rpe = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => '<label class="valg"><input type="radio" name="rpe" value="' + n + '"'
+    + (v.rpe === n ? ' checked' : '') + '><span>' + n + '</span></label>').join('');
+  const smerte = ['nei', 'litt', 'mye'].map((s) => '<label class="valg"><input type="radio" name="smerte" value="' + s + '"'
+    + ((v.pain || 'nei') === s ? ' checked' : '') + '><span>' + SMERTE_NAVN[s] + '</span></label>').join('');
+  const bra = [1, 2, 3].map((i) => '<div class="felt nummerert"><label for="lbra' + i + '">' + i + '.</label>'
+    + '<input id="lbra' + i + '" name="bra' + i + '" maxlength="120" autocomplete="off" placeholder="' + esc(BRA_EKSEMPEL[i - 1]) + '" value="' + esc(v['good_' + i] || '') + '"></div>').join('');
+  html += '<form class="skjema" data-skjema="logg" novalidate>'
+    + '<input type="hidden" name="okt" value="' + esc(h.id) + '">'
+    + '<section class="kort"><fieldset class="felt"><legend>Hvor hard var økta for deg?</legend>'
+    + '<div class="rpe">' + rpe + '</div>'
+    + '<p class="skala"><span>1 veldig lett</span><span>5 hard</span><span>10 maks</span></p></fieldset>'
+    + '<div class="to-kol">'
+    + '<div class="felt"><label for="lmin">Minutter du var med</label><input id="lmin" name="minutter" inputmode="numeric" maxlength="3" value="' + esc(v.minutes || minutterFor(h)) + '"></div>'
+    + '<fieldset class="felt"><legend>Smerter etter økta?</legend><div class="valg-rad">' + smerte + '</div></fieldset>'
+    + '</div>'
+    + '<div class="felt"><label for="lhvor">Hvor har du vondt? (hvis du har smerter)</label><input id="lhvor" name="hvor" maxlength="80" autocomplete="off" placeholder="F.eks. kneet" value="' + esc(v.pain_where || '') + '"></div>'
+    + '</section>'
+    + '<section class="kort"><h2>Tre ting som var bra</h2>' + bra
+    + '<h2>Én ting å bli bedre på</h2>'
+    + '<div class="felt"><label class="skjult" for="lbedre">Én ting å bli bedre på</label><input id="lbedre" name="bedre" maxlength="160" autocomplete="off" placeholder="F.eks. raskere i posisjon etter balltap" value="' + esc(v.improve || '') + '"></div>'
+    + '</section>'
+    + skjemafeil()
+    + '<button class="knapp" type="submit">' + (logg ? 'Lagre endringer' : 'Lagre loggen') + '</button></form>';
+  if (logg && Date.now() - new Date(logg.created_at).getTime() < LOGG_DAGER * DAG_MS) {
+    html += '<button type="button" class="lenkeknapp" data-handling="slett-logg" data-id="' + esc(logg.id) + '">Slett loggen</button>';
+  }
+  return html;
+}
+
+/* ---------- Utviklingsmål ---------- */
+
+function visMal() {
+  const trener = S.profil.role === 'trener';
+  const kilde = trener ? (S.trener ? S.trener.mal : []) : S.mal;
+  const id = ruteParam('id');
+  const m = id ? kilde.find((x) => x.id === id) : null;
+  const spillerId = m ? m.player_id : (trener ? ruteParam('spiller') : S.profil.player_id);
+  const apne = apnePerioder();
+  const periodeId = m ? m.period_id : (ruteParam('periode') || (apne[0] && apne[0].id) || '');
+  const periode = S.perioder.find((p) => p.id === periodeId);
+  const tilbake = trener ? '#/spiller?id=' + encodeURIComponent(spillerId) : '#/meg';
+  let html = '<div class="overskrift"><p class="overlinje">' + esc(periode ? periodeTittel(periode.id) : 'Utviklingsmål') + '</p>'
+    + '<h1>' + (m ? 'Endre mål' : 'Nytt mål') + '</h1>'
+    + (trener ? '<p class="dempet">' + esc(spillerNavn(spillerId)) + '</p>' : '') + '</div>';
+  if ((id && !m) || !periode || (trener && !spillerId)) {
+    return html + '<section class="kort tomt"><p>Fant ikke målet eller perioden.</p></section><a class="knapp sekundar" href="' + esc(tilbake) + '">Tilbake</a>';
+  }
+  const aapen = apne.some((p) => p.id === periode.id);
+  if (!trener && !m && !aapen) {
+    return html + '<section class="kort tomt"><p>Perioden er over. Du kan sette mål for perioden nå og den neste.</p></section>'
+      + '<a class="knapp sekundar" href="#/meg">Tilbake</a>';
+  }
+  if (!trener && m && !aapen && !kanEvaluere(periode.id)) {
+    return html + '<section class="kort">' + malBlokk(m, null, false) + '</section>'
+      + '<p class="dempet liten">Perioden er over, så målet kan ikke endres lenger.</p><a class="knapp sekundar" href="#/meg">Tilbake</a>';
+  }
+  if (!m && kilde.filter((x) => x.player_id === spillerId && x.period_id === periode.id).length >= 3) {
+    return html + '<section class="kort tomt"><p>Det er allerede tre mål i denne perioden. Endre eller slett et av dem først.</p></section>'
+      + '<a class="knapp sekundar" href="' + esc(tilbake) + '">Tilbake</a>';
+  }
+  if (periode.focus) {
+    html += '<section class="kort tips"><p class="overlinje">Periodens fokus</p><p>' + esc(periode.focus) + '</p>'
+      + '<p class="dempet liten">Et godt mål er noe treneren kan se på trening og i kamp. For eksempel: «Bruke svak fot i pasningsøvelser og småbanespill».</p></section>';
+  }
+  const v = m || {};
+  html += '<form class="skjema" data-skjema="mal" novalidate>'
+    + '<input type="hidden" name="id" value="' + esc(v.id || '') + '">'
+    + '<input type="hidden" name="spiller" value="' + esc(spillerId) + '">'
+    + '<input type="hidden" name="periode" value="' + esc(periode.id) + '">'
+    + '<section class="kort">'
+    + '<div class="felt"><label for="mmal">' + (trener ? 'Målet' : 'Hva vil du bli bedre på?') + '</label>'
+    + '<textarea id="mmal" name="mal" maxlength="160" rows="2" placeholder="F.eks. scanne før jeg får ballen">' + esc(v.goal || '') + '</textarea></div>'
+    + '<div class="felt"><label for="mhvordan">Slik jobber ' + (trener ? 'spilleren' : 'jeg') + ' med det</label>'
+    + '<textarea id="mhvordan" name="hvordan" maxlength="240" rows="3" placeholder="F.eks. se over skulderen to ganger før ballen kommer, særlig i possession">' + esc(v.how || '') + '</textarea></div>';
+  if (m) {
+    html += '<fieldset class="felt"><legend>Status</legend><div class="valg-rad fire">'
+      + Object.entries(MAL_STATUS).map(([k, s]) => '<label class="valg"><input type="radio" name="status" value="' + k + '"'
+        + (v.status === k ? ' checked' : '') + '><span>' + esc(s.navn) + '</span></label>').join('')
+      + '</div></fieldset>'
+      + '<div class="felt"><label for="mrefl">Hvordan gikk det?</label>'
+      + '<textarea id="mrefl" name="refleksjon" maxlength="300" rows="3">' + esc(v.reflection || '') + '</textarea></div>';
+  }
+  if (trener) {
+    html += '<div class="felt"><label for="mkomm">Kommentar fra trener</label>'
+      + '<textarea id="mkomm" name="kommentar" maxlength="400" rows="3">' + esc(v.coach_comment || '') + '</textarea></div>';
+  } else if (v.coach_comment) {
+    html += '<p class="trenerkommentar"><strong>Trener:</strong> ' + esc(v.coach_comment) + '</p>';
+  }
+  html += '</section>' + skjemafeil() + '<button class="knapp" type="submit">Lagre målet</button></form>';
+  if (m && (trener || aapen)) {
+    html += '<button type="button" class="lenkeknapp" data-handling="slett-mal" data-id="' + esc(m.id) + '">Slett målet</button>';
+  }
+  return html + '<a class="lenkeknapp" href="' + esc(tilbake) + '">Avbryt</a>';
+}
+
+/* ---------- Trener: økt og spiller ---------- */
+
+function spillereMedSamtykke() {
+  const t = S.trener;
+  return t.spillere.filter((s) => s.active && t.samtykker.some((c) => c.player_id === s.id && !c.withdrawn_at));
+}
+
+function loggOppsummering(logger) {
+  if (!logger.length) return 'Ingen har logget';
+  const smerter = logger.filter((l) => l.pain !== 'nei').length;
+  return 'snitt ' + desimal(snitt(logger.map((l) => l.rpe))) + (smerter ? ' · ' + smerter + ' med smerter' : '');
+}
+
+function loggKort(l, tittel) {
+  return '<div class="kort logg">'
+    + '<div class="kort-topp"><h3>' + esc(tittel) + '</h3><span class="merkelapp rpe-merke">' + l.rpe + ' av 10</span></div>'
+    + '<p class="dempet liten">' + l.minutes + ' min · belastning ' + belastning(l)
+    + (l.pain !== 'nei' ? ' · <span class="smerte">' + esc(SMERTE_NAVN[l.pain]) + ' smerter' + (l.pain_where ? ': ' + esc(l.pain_where) : '') + '</span>' : '') + '</p>'
+    + ([l.good_1, l.good_2, l.good_3].some(Boolean)
+      ? '<p class="liten"><strong>Bra</strong></p><ul class="punkter">' + [l.good_1, l.good_2, l.good_3].filter(Boolean).map((g) => '<li>' + esc(g) + '</li>').join('') + '</ul>'
+      : '')
+    + (l.improve ? '<p class="liten"><strong>Bli bedre på:</strong> ' + esc(l.improve) + '</p>' : '')
+    + '</div>';
+}
+
+function visOkt() {
+  const t = S.trener;
+  const h = S.hendelser.find((x) => x.id === ruteParam('id'));
+  let html = '<div class="overskrift"><p class="overlinje">Logg fra økta</p>'
+    + '<h1>' + (h ? esc(dagInfo(h.starts_at).lang) : 'Fant ikke økta') + '</h1>'
+    + (h ? '<p class="dempet">' + esc(h.title + ' · ' + tidTekst(h)) + '</p>' : '') + '</div>';
+  if (!h || !t) return html + '<a class="knapp sekundar" href="#/trener">Tilbake</a>';
+  const logger = t.logger.filter((l) => l.event_id === h.id)
+    .sort((a, b) => spillerNavn(a.player_id).localeCompare(spillerNavn(b.player_id), 'nb'));
+  const medSamtykke = spillereMedSamtykke();
+  const ikke = medSamtykke.filter((s) => !logger.some((l) => l.player_id === s.id));
+  const smerter = logger.filter((l) => l.pain !== 'nei');
+  html += '<section class="tall-rad">'
+    + '<div><b>' + logger.length + '</b><span>av ' + medSamtykke.length + ' har logget</span></div>'
+    + '<div><b>' + (logger.length ? desimal(snitt(logger.map((l) => l.rpe))) : '–') + '</b><span>snitt belastning</span></div>'
+    + '<div><b>' + smerter.length + '</b><span>med smerter</span></div></section>';
+  if (smerter.length) {
+    html += '<section class="kort varselkort"><p class="overlinje">Smerter</p><ul class="punkter">'
+      + smerter.map((l) => '<li><strong>' + esc(spillerNavn(l.player_id)) + '</strong>: ' + esc(SMERTE_NAVN[l.pain].toLowerCase())
+        + (l.pain_where ? ', ' + esc(l.pain_where) : '') + '</li>').join('') + '</ul></section>';
+  }
+  html += logger.length
+    ? '<section class="uke"><h2>Loggene</h2>' + logger.map((l) => loggKort(l, spillerNavn(l.player_id))).join('') + '</section>'
+    : '<section class="kort tomt"><p class="dempet">Ingen har logget denne økta ennå.</p></section>';
+  if (ikke.length) {
+    html += '<section class="kort"><p class="overlinje">Ikke logget</p><p>' + ikke.map((s) => esc(s.full_name)).join(', ') + '</p></section>';
+  }
+  return html + '<a class="knapp sekundar" href="#/trener">Tilbake til trenersiden</a>';
+}
+
+function visSpiller() {
+  const t = S.trener;
+  const id = ruteParam('id');
+  const s = t && t.spillere.find((x) => x.id === id);
+  if (!s) return '<div class="overskrift"><h1>Fant ikke spilleren</h1></div><a class="knapp sekundar" href="#/trener">Tilbake</a>';
+  const harKonto = t.profiler.some((p) => p.role === 'spiller' && p.player_id === s.id);
+  const samtykke = t.samtykker.some((c) => c.player_id === s.id && !c.withdrawn_at);
+  const sone = t.soner.find((z) => z.player_id === s.id);
+  const sk = sone && SONE[sone.sone];
+  let html = '<div class="overskrift"><p class="overlinje">' + esc(POSISJON_NAVN[s.position] || 'Spiller') + '</p><h1>' + esc(s.full_name) + '</h1></div>'
+    + '<div class="merker">'
+    + '<span class="merkelapp' + (harKonto ? ' sone-gronn' : '') + '">' + (harKonto ? 'Har konto' : 'Ingen konto') + '</span>'
+    + '<span class="merkelapp' + (samtykke ? ' sone-gronn' : '') + '">' + (samtykke ? 'Samtykke' : 'Uten samtykke') + '</span>'
+    + (sk && sone.sone !== 'mangler' ? '<span class="merkelapp ' + sk.klasse + '">Vekst: ' + esc(sk.navn) + '</span>' : '')
+    + '</div>';
+
+  /* Mål */
+  const mal = t.mal.filter((m) => m.player_id === s.id);
+  const apne = apnePerioder();
+  const startFor = (pid) => (S.perioder.find((p) => p.id === pid) || {}).start_date || '';
+  const tidligere = [...new Set(mal.map((m) => m.period_id))]
+    .filter((pid) => !apne.some((p) => p.id === pid))
+    .sort((a, b) => startFor(b).localeCompare(startFor(a)));
+  const perioder = apne.map((p) => p.id).concat(tidligere);
+  html += '<section class="uke"><h2>Utviklingsmål</h2>';
+  for (const pid of perioder) {
+    const egne = mal.filter((m) => m.period_id === pid);
+    const aapen = apne.some((p) => p.id === pid);
+    const snart = aapen && (datoFraStr(startFor(pid)) - datoFraStr(idagStr())) / DAG_MS <= 10;
+    if (!egne.length && !((apne[0] && pid === apne[0].id) || snart)) continue;
+    html += '<div class="kort"><p class="overlinje">' + esc(periodeTittel(pid)) + '</p>'
+      + (egne.length ? egne.map((m) => malBlokk(m, '#/mal?id=' + encodeURIComponent(m.id), true)).join('') : '<p class="dempet">Ingen mål ennå.</p>')
+      + (aapen && egne.length < 3 ? '<a class="knapp sekundar liten-knapp" href="#/mal?spiller=' + esc(encodeURIComponent(s.id)) + '&periode=' + esc(encodeURIComponent(pid)) + '">Nytt mål</a>' : '')
+      + '</div>';
+  }
+  html += '</section>';
+
+  /* Belastning per uke, økt-RPE ganger minutter */
+  const logger = t.logger.filter((l) => l.player_id === s.id)
+    .map((l) => ({ l, h: S.hendelser.find((x) => x.id === l.event_id) }))
+    .filter((x) => x.h)
+    .sort((a, b) => new Date(b.h.starts_at) - new Date(a.h.starts_at));
+  html += '<section class="uke"><h2>Belastning</h2>';
+  if (!logger.length) {
+    html += '<section class="kort tomt"><p class="dempet">Ingen logger ennå.</p></section>';
+  } else {
+    const uker = [];
+    for (const x of logger) {
+      const m = mandagFor(new Date(x.h.starts_at)).getTime();
+      let u = uker.find((y) => y.m === m);
+      if (!u) {
+        u = { m, sum: 0, okter: 0, rpe: [] };
+        uker.push(u);
+      }
+      u.sum += belastning(x.l);
+      u.okter += 1;
+      u.rpe.push(x.l.rpe);
+    }
+    html += '<div class="liste">' + uker.slice(0, 6).map((u) => '<div class="rad"><div class="rad-tekst">'
+      + '<span class="navn">Uke ' + isoUke(new Date(u.m)) + '</span>'
+      + '<span class="under">' + u.okter + (u.okter === 1 ? ' økt' : ' økter') + ' · snitt ' + desimal(snitt(u.rpe)) + '</span></div>'
+      + '<span class="tall">' + u.sum + '</span></div>').join('') + '</div>'
+      + '<p class="dempet liten">Belastning = hvor hard økta var (1–10) × minutter, lagt sammen per uke.</p>';
+  }
+  html += '</section>';
+
+  if (logger.length) {
+    html += '<section class="uke"><h2>Siste logger</h2>'
+      + logger.slice(0, 8).map((x) => loggKort(x.l, dagInfo(x.h.starts_at).lang)).join('') + '</section>';
+  }
+
+  if (sone && sone.sist_malt) {
+    html += '<section class="kort"><p class="overlinje">Høyde</p><p><strong>' + esc(cm(sone.hoyde_cm)) + ' cm</strong> · målt ' + esc(datoUtenAar(sone.sist_malt)) + '</p>'
+      + (sone.vekst_siste_mnd != null ? '<p class="dempet liten">' + esc(medFortegn(sone.vekst_siste_mnd)) + ' cm siste måned</p>' : '') + '</section>';
+  }
+  return html + '<a class="knapp sekundar" href="#/trener">Tilbake til trenersiden</a>';
 }
 
 /* ---------- Trener ---------- */
@@ -1046,18 +1492,40 @@ function visTrener() {
     + '</select></div>' + skjemafeil()
     + '<button class="knapp sekundar" type="submit">Lag kode</button></form></section>';
 
+  /* Logg fra økter de siste 14 dagene */
+  const naa = Date.now();
+  const nyligeOkter = S.hendelser
+    .filter((h) => LOGG_TYPER.includes(h.kind) && h.status !== 'avlyst' && new Date(h.starts_at).getTime() <= naa
+      && sluttTid(h).getTime() >= naa - 14 * DAG_MS)
+    .sort((a, b) => new Date(b.starts_at) - new Date(a.starts_at));
+  const antallMedSamtykke = spillereMedSamtykke().length;
+  html += '<section class="uke"><h2>Logg fra økter</h2>';
+  html += nyligeOkter.length
+    ? '<div class="liste">' + nyligeOkter.map((h) => {
+      const d = dagInfo(h.starts_at);
+      const logger = t.logger.filter((l) => l.event_id === h.id);
+      return '<a class="rad lenkerad" href="#/okt?id=' + esc(encodeURIComponent(h.id)) + '">'
+        + '<div class="dato-blokk"><span class="dag">' + esc(d.kort) + '</span><span class="dato">' + esc(d.dato) + '</span></div>'
+        + '<div class="rad-tekst"><span class="navn">' + logger.length + ' av ' + antallMedSamtykke + ' har logget</span>'
+        + '<span class="under">' + esc(loggOppsummering(logger)) + '</span></div><span class="pil" aria-hidden="true">›</span></a>';
+    }).join('') + '</div>'
+    : '<section class="kort tomt"><p class="dempet">Etter første økt ser du loggene til spillerne her: belastning, smerter og tilbakemeldinger.</p></section>';
+  html += '</section>';
+
   const soner = new Map(t.soner.map((s) => [s.player_id, s]));
-  html += '<section class="uke"><h2>Spillere</h2><div class="liste">'
+  html += '<section class="uke"><h2>Spillere</h2><p class="dempet liten">Trykk på en spiller for mål, logger og belastning.</p><div class="liste">'
     + aktiveSpillere.map((s) => {
       const foreldre = t.lenker.filter((l) => l.player_id === s.id).length;
       const samtykke = t.samtykker.some((c) => c.player_id === s.id && !c.withdrawn_at);
       const sone = soner.get(s.id);
       const sk = sone && SONE[sone.sone];
-      return '<div class="rad spillerrad"><div class="rad-tekst"><span class="navn">' + esc(s.full_name) + '</span>'
+      const antallMal = t.mal.filter((m) => m.player_id === s.id && apnePerioder().some((p) => p.id === m.period_id)).length;
+      return '<a class="rad spillerrad lenkerad" href="#/spiller?id=' + esc(encodeURIComponent(s.id)) + '"><div class="rad-tekst"><span class="navn">' + esc(s.full_name) + '</span>'
         + '<span class="under">' + esc(POSISJON_NAVN[s.position] || '') + ' · ' + (harKonto.has(s.id) ? 'har konto' : 'ingen konto')
-        + ' · ' + foreldre + (foreldre === 1 ? ' forelder' : ' foreldre') + '</span></div>'
+        + ' · ' + foreldre + (foreldre === 1 ? ' forelder' : ' foreldre')
+        + (antallMal ? ' · ' + antallMal + (antallMal === 1 ? ' mål' : ' mål') : '') + '</span></div>'
         + '<div class="merker">' + (samtykke ? '<span class="merkelapp sone-gronn">Samtykke</span>' : '<span class="merkelapp">Uten samtykke</span>')
-        + (sk && sone.sone !== 'mangler' ? '<span class="merkelapp ' + sk.klasse + '">' + esc(sk.navn) + '</span>' : '') + '</div></div>';
+        + (sk && sone.sone !== 'mangler' ? '<span class="merkelapp ' + sk.klasse + '">' + esc(sk.navn) + '</span>' : '') + '</div></a>';
     }).join('')
     + '</div></section>';
 
@@ -1082,7 +1550,6 @@ function visTrener() {
     + ['rød', 'gul', 'grønn'].map((n) => '<div><span class="merkelapp ' + SONE[n].klasse + '">' + SONE[n].navn + '</span><span>' + esc(SONE[n].tiltak) + '</span></div>').join('')
     + '</div><p class="dempet liten">Rød: over 1,0 cm siste måned eller over 0,6 cm per måned i snitt siste tre måneder. Gul: akkurat på en av grensene. Under tre måneders historikk brukes bare siste måned. Vurder alltid smerter, funksjon og totalbelastning.</p></div></section>';
 
-  const naa = Date.now();
   const aktiveKoder = t.koder.filter((k) => !k.used_at && new Date(k.expires_at).getTime() > naa);
   html += '<section class="uke"><h2>Aktive koder</h2>';
   html += aktiveKoder.length
@@ -1112,6 +1579,35 @@ function demoHoyder() {
   });
 }
 
+/* En oppdiktet økt fra den siste tirsdagen, onsdagen eller fredagen, så logg-kortet vises. */
+function demoOkt() {
+  let start = null;
+  for (let d = 1; d <= 7 && !start; d++) {
+    const dag = new Date(Date.now() - d * DAG_MS);
+    if ([2, 3, 5].includes(dag.getUTCDay())) start = dag;
+  }
+  start.setUTCHours(15, 45, 0, 0);
+  return {
+    id: 'demo-okt', kind: 'trening', title: 'Fellestrening (eksempel)',
+    starts_at: start.toISOString(), ends_at: new Date(start.getTime() + 75 * 60000).toISOString(),
+    meet_at: new Date(start.getTime() - 15 * 60000).toISOString(), location: 'Sofiemyr kunstgress',
+    theme: null, why: null, details: null, opponent: null, period_id: null, status: 'bekreftet'
+  };
+}
+
+function demoMal() {
+  const p = apnePerioder()[0];
+  if (!p) return [];
+  const felles = { player_id: DEMO_SPILLER.id, period_id: p.id, status: 'aktiv', reflection: null, created_at: new Date().toISOString() };
+  return [
+    Object.assign({ id: 'demo-mal-1', goal: 'Bruke svak fot i pasningsøvelser og småbanespill',
+      how: '20 pasninger med venstre hver økt og 10 minutter egentrening to ganger i uka',
+      coach_comment: 'Godt mål. Vi ser etter det i dobbelrondoen på tirsdager.' }, felles),
+    Object.assign({ id: 'demo-mal-2', goal: 'Scanne før jeg får ballen',
+      how: 'Se over skulderen to ganger før ballen kommer, særlig i possession', coach_comment: null }, felles)
+  ];
+}
+
 function visningsBanner() {
   if (!UI.visSom) return '';
   return '<div class="visning" role="status"><p><strong>Du ser siden som ' + (UI.visSom === 'spiller' ? 'spiller' : 'forelder') + '</strong>'
@@ -1122,7 +1618,10 @@ function visningsBanner() {
 function startVisning(rolle) {
   if (!S.profil || S.profil.role !== 'trener' || UI.visSom) return;
   if (rolle !== 'spiller' && rolle !== 'forelder') return;
-  UI.ekte = { profil: S.profil, sider: S.sider, spiller: S.spiller, samtykker: S.samtykker, hoyder: S.hoyder, barn: S.barn };
+  UI.ekte = {
+    profil: S.profil, sider: S.sider, spiller: S.spiller, samtykker: S.samtykker, hoyder: S.hoyder,
+    barn: S.barn, hendelser: S.hendelser, logger: S.logger, mal: S.mal
+  };
   UI.visSom = rolle;
   UI.kodeResultat = null;
   S.sider = Object.fromEntries(Object.entries(S.sider).filter(([, side]) => side.audience === 'alle'));
@@ -1131,12 +1630,19 @@ function startVisning(rolle) {
     S.spiller = DEMO_SPILLER;
     S.samtykker = [{ player_id: DEMO_SPILLER.id, version: KONFIG.samtykkeVersjon, accepted_at: new Date().toISOString(), withdrawn_at: null }];
     S.hoyder = demoHoyder();
+    if (!S.hendelser.some(kanLogges)) {
+      S.hendelser = S.hendelser.concat([demoOkt()]).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+    }
+    S.logger = [];
+    S.mal = demoMal();
     S.barn = [];
   } else {
     S.profil = { id: 'demo-profil', username: 'kari.n', full_name: 'Kari Nordmann', role: 'forelder', player_id: null };
     S.spiller = null;
     S.samtykker = [];
     S.hoyder = [];
+    S.logger = [];
+    S.mal = [];
     S.barn = [DEMO_SPILLER];
   }
   gaTil(rolle === 'forelder' ? 'meg' : 'uke');
@@ -1216,6 +1722,101 @@ const SKJEMA = {
     });
     await lastSpiller();
     UI.melding = 'Høyden er lagret.';
+    tegn();
+  },
+
+  async 'logg'(d) {
+    const h = S.hendelser.find((x) => x.id === d.okt);
+    if (!h) throw new Error('Fant ikke økta.');
+    const rpe = Number(d.rpe);
+    if (!(rpe >= 1 && rpe <= 10)) throw new Error('Velg hvor hard økta var, fra 1 til 10.');
+    const minutter = heltall(d.minutter);
+    if (!(minutter >= 1 && minutter <= 240)) throw new Error('Skriv hvor mange minutter du var med, for eksempel 75.');
+    const bra = [d.bra1, d.bra2, d.bra3].map(tekstFelt);
+    if (bra.some((s) => !s || s.length < 2)) throw new Error('Skriv tre ting som var bra.');
+    const bedre = tekstFelt(d.bedre);
+    if (!bedre || bedre.length < 2) throw new Error('Skriv én ting du vil bli bedre på.');
+    const smerte = SMERTE_NAVN[d.smerte] ? d.smerte : 'nei';
+    const kropp = {
+      player_id: S.profil.player_id,
+      event_id: h.id,
+      rpe,
+      minutes: minutter,
+      pain: smerte,
+      pain_where: smerte === 'nei' ? null : tekstFelt(d.hvor),
+      good_1: bra[0],
+      good_2: bra[1],
+      good_3: bra[2],
+      improve: bedre
+    };
+    const takk = smerte === 'mye' ? 'Takk! Økta er logget. Si fra til treneren om smertene.' : 'Takk! Økta er logget.';
+    if (UI.visSom) {
+      const gammel = loggFor(h.id);
+      S.logger = [Object.assign({ id: 'demo-logg-' + h.id, created_at: new Date().toISOString() }, gammel || {}, kropp)]
+        .concat(S.logger.filter((l) => l.event_id !== h.id));
+      UI.melding = 'Forhåndsvisning: loggen er ikke lagret.';
+      gaTil('uke');
+      return;
+    }
+    await api.rest('session_logs?on_conflict=player_id,event_id', {
+      metode: 'POST',
+      prefer: 'resolution=merge-duplicates,return=minimal',
+      kropp
+    });
+    await lastSpiller();
+    UI.melding = takk;
+    gaTil('uke');
+  },
+
+  async 'mal'(d) {
+    const trener = S.profil.role === 'trener';
+    const mal = tekstFelt(d.mal);
+    if (!mal || mal.length < 3) throw new Error('Skriv målet med noen få ord.');
+    const kropp = { goal: mal, how: tekstFelt(d.hvordan) };
+    if (d.id) {
+      if (MAL_STATUS[d.status]) kropp.status = d.status;
+      kropp.reflection = tekstFelt(d.refleksjon);
+    } else {
+      kropp.period_id = d.periode;
+      if (trener) kropp.player_id = d.spiller;
+    }
+    if (trener) kropp.coach_comment = tekstFelt(d.kommentar);
+    if (UI.visSom) {
+      if (d.id) {
+        S.mal = S.mal.map((m) => (m.id === d.id ? Object.assign({}, m, kropp) : m));
+      } else {
+        if (S.mal.filter((m) => m.period_id === d.periode).length >= 3) throw new Error('Du kan ha maks tre mål per periode.');
+        S.mal = S.mal.concat([Object.assign({ id: 'demo-mal-' + Date.now(), player_id: S.profil.player_id, status: 'aktiv', reflection: null, coach_comment: null, created_at: new Date().toISOString() }, kropp)]);
+      }
+      UI.melding = 'Forhåndsvisning: målet er ikke lagret.';
+      gaTil('meg');
+      return;
+    }
+    if (d.id) {
+      const rader = await api.rest('goals?id=eq.' + encodeURIComponent(d.id) + '&select=id', { metode: 'PATCH', prefer: 'return=representation', kropp });
+      if (!rader || !rader.length) throw new Error('Målet kan ikke endres lenger.');
+    } else {
+      await api.rest('goals', { metode: 'POST', prefer: 'return=minimal', kropp });
+    }
+    UI.melding = 'Målet er lagret.';
+    if (trener) {
+      await lastTrener();
+      gaTil('spiller?id=' + encodeURIComponent(d.spiller));
+    } else {
+      await lastSpiller();
+      gaTil('meg');
+    }
+  },
+
+  async 'trenerkommentar'(d) {
+    if (S.profil.role !== 'trener' || !d.id) return;
+    await api.rest('goals?id=eq.' + encodeURIComponent(d.id), {
+      metode: 'PATCH',
+      prefer: 'return=minimal',
+      kropp: { coach_comment: tekstFelt(d.kommentar) }
+    });
+    await lastTrener();
+    UI.melding = 'Kommentaren er lagret.';
     tegn();
   },
 
@@ -1418,6 +2019,41 @@ async function vedKlikk(e) {
       UI.melding = 'Målingen er slettet.';
       tegn();
     });
+  } else if (h === 'slett-logg') {
+    if (!window.confirm('Slette loggen for denne økta?')) return;
+    if (UI.visSom) {
+      S.logger = S.logger.filter((l) => l.id !== el.dataset.id);
+      UI.melding = 'Forhåndsvisning: loggen er ikke slettet.';
+      gaTil('meg');
+      return;
+    }
+    await utfor(async () => {
+      await api.rest('session_logs?id=eq.' + encodeURIComponent(el.dataset.id), { metode: 'DELETE', prefer: 'return=minimal' });
+      await lastSpiller();
+      UI.melding = 'Loggen er slettet.';
+      gaTil('meg');
+    });
+  } else if (h === 'slett-mal') {
+    if (!window.confirm('Slette målet?')) return;
+    const trener = S.profil.role === 'trener';
+    if (UI.visSom) {
+      S.mal = S.mal.filter((m) => m.id !== el.dataset.id);
+      UI.melding = 'Forhåndsvisning: målet er ikke slettet.';
+      gaTil('meg');
+      return;
+    }
+    await utfor(async () => {
+      const m = trener && S.trener.mal.find((x) => x.id === el.dataset.id);
+      await api.rest('goals?id=eq.' + encodeURIComponent(el.dataset.id), { metode: 'DELETE', prefer: 'return=minimal' });
+      UI.melding = 'Målet er slettet.';
+      if (trener) {
+        await lastTrener();
+        gaTil(m ? 'spiller?id=' + encodeURIComponent(m.player_id) : 'trener');
+      } else {
+        await lastSpiller();
+        gaTil('meg');
+      }
+    });
   } else if (h === 'slett-kode') {
     if (!window.confirm('Slette koden? Den kan ikke brukes etterpå.')) return;
     await utfor(async () => {
@@ -1437,8 +2073,15 @@ const SIDER = {
   spillmodell: ['Spillmodell', visSpillmodell],
   plan: ['Utviklingsplan', visPlan],
   meg: ['Meg', visMeg],
-  trener: ['Trener', visTrener]
+  logg: ['Logg økta', visLogg],
+  mal: ['Utviklingsmål', visMal],
+  trener: ['Trener', visTrener],
+  okt: ['Logg fra økta', visOkt],
+  spiller: ['Spiller', visSpiller]
 };
+
+/* Hvem som kan åpne hvilke sider. Resten er for alle innloggede. */
+const SIDE_ROLLER = { logg: ['spiller'], mal: ['spiller', 'trener'], trener: ['trener'], okt: ['trener'], spiller: ['trener'] };
 
 function gjeldendeRute() {
   return location.hash.replace(/^#\/?/, '').split('?')[0];
@@ -1457,14 +2100,14 @@ function tegn() {
     html = visUtenProfil();
   } else {
     let navn = SIDER[rute] ? rute : 'uke';
-    if (navn === 'trener' && S.profil.role !== 'trener') navn = 'uke';
+    if (SIDE_ROLLER[navn] && !SIDE_ROLLER[navn].includes(S.profil.role)) navn = 'uke';
     html = ramme(navn, SIDER[navn][1]());
     tittel = SIDER[navn][0] + ' – Kolbotn G2011';
   }
   app.innerHTML = html;
   document.title = tittel;
-  if (rute !== UI.forrigeRute) {
-    UI.forrigeRute = rute;
+  if (location.hash !== UI.forrigeRute) {
+    UI.forrigeRute = location.hash;
     window.scrollTo(0, 0);
   }
   UI.melding = '';
