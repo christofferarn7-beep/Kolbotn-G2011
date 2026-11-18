@@ -811,7 +811,7 @@ function visLastFeil() {
 
 /* Undersider markerer fanen de hører til. */
 const FANE_FOR = {
-  plan: 'mer', spillmodell: 'mer', egentrening: 'mer', inspirasjon: 'mer',
+  plan: 'mer', spillmodell: 'mer', egentrening: 'mer', inspirasjon: 'hjem',
   logg: 'meg', mal: 'meg', okt: 'trener', spiller: 'trener', oppforing: 'kalender'
 };
 
@@ -1248,20 +1248,63 @@ function megForelder() {
 
 /* ---------- Hjem og Mer ---------- */
 
+/* Forklaring på appen, tilpasset rollen. Ligger øverst på Hjem. */
+function appForklaring() {
+  const hjemskjerm = ['Tips', 'Legg siden til på Hjem-skjermen, så funker den som en app. På iPhone: Del-knappen i Safari, deretter «Legg til på Hjem-skjerm».'];
+  const punkter = {
+    spiller: [
+      ['Hjem', 'Her deler trenerne videoer, innlegg og artikler. Scroll gjennom og trykk på en video for å se den.'],
+      ['Denne uka', 'Neste trening med oppmøte og sted. Etter økta logger du hvor hard den var, tre ting som var bra og én ting å bli bedre på.'],
+      ['Kalender', 'Lagets kalender, og Min kalender der du legger inn skole, annen trening, måltider og når du legger deg.'],
+      ['Meg', 'Målene dine for perioden, øktene du har logget og høyden din.'],
+      ['Mer', 'Egentrening, spillmodellen og utviklingsplanen.'],
+      hjemskjerm
+    ],
+    forelder: [
+      ['Hjem', 'Videoer, innlegg og artikler trenerne deler med laget.'],
+      ['Denne uka og Kalender', 'Treninger, kamper og periodene i årshjulet.'],
+      ['Meg', 'Her gir eller trekker du samtykke for gutten din.'],
+      ['Mer', 'Egentrening, spillmodellen og utviklingsplanen.'],
+      hjemskjerm
+    ],
+    trener: [
+      ['Hjem', 'Det du deler under «Del noe nytt», havner øverst her. Lim inn lenker fra TikTok, Instagram, YouTube, Vimeo eller en artikkel.'],
+      ['Denne uka og Kalender', 'Det samme som spillerne ser.'],
+      ['Trener', 'Koder, logg fra øktene, annen belastning i dag, spillerne med mål og ukeplan, og vekstsoner.'],
+      ['Mer', 'Egentrening, spillmodell, utviklingsplan og Meg.'],
+      ['Forhåndsvisning', 'På Trener-fanen kan du se siden slik spillerne og foreldrene ser den.']
+    ]
+  }[S.profil.role] || [];
+  return '<details class="kort forklaring"><summary><span class="forklaring-banner"><img src="img/lag-samling.jpg" alt="">'
+    + '<span class="forklaring-tittel"><b>Slik bruker du appen</b><small>Trykk for en rask forklaring</small></span>'
+    + '<span class="forklaring-pil" aria-hidden="true"></span></span></summary>'
+    + '<ul class="forklaring-liste">' + punkter.map(([navn, tekst]) => '<li><strong>' + esc(navn) + '</strong><span>' + esc(tekst) + '</span></li>').join('') + '</ul></details>';
+}
+
+function delSkjema() {
+  return '<details class="kort del"' + (S.inspirasjon.length ? '' : ' open') + '><summary class="lenkeknapp">Del noe nytt</summary>'
+    + '<form class="skjema" data-skjema="inspirasjon" novalidate>'
+    + '<div class="felt"><label for="iurl">Lenke</label><input id="iurl" name="url" type="url" inputmode="url" autocomplete="off" placeholder="https://"></div>'
+    + '<div class="felt"><label for="ititt">Tittel</label><input id="ititt" name="tittel" maxlength="140" autocomplete="off" placeholder="F.eks. Scanning før mottak"></div>'
+    + '<div class="felt"><label for="inotat">Hvorfor er dette verdt å se?</label><textarea id="inotat" name="notat" maxlength="500" rows="3" placeholder="F.eks. Se hvor ofte han ser seg rundt før ballen kommer."></textarea></div>'
+    + skjemafeil() + '<button class="knapp" type="submit">Del med laget</button></form></details>';
+}
+
+/* Hjem er en feed med det trenerne deler, med forklaring på appen øverst. */
 function visHjem() {
   const fornavn = String(S.profil.full_name || '').trim().split(/\s+/)[0] || '';
-  return '<section class="hjem">'
-    + '<img src="img/lag-feiring.jpg" alt="TG1 feirer med pokalen">'
-    + '<div class="hjem-tekst"><p class="overlinje">Kolbotn G2011 · TG1</p>'
-    + (fornavn ? '<p class="hilsen">Hei, ' + esc(fornavn) + '!</p>' : '')
-    + '<h1>Coming soon</h1>'
-    + '<p>Her kommer mer fra laget.</p></div></section>';
+  let html = '<div class="overskrift"><p class="overlinje">Kolbotn G2011 · TG1</p><h1>' + (fornavn ? 'Hei, ' + esc(fornavn) + '!' : 'Hjem') + '</h1></div>'
+    + appForklaring();
+  if (S.profil.role === 'trener') html += delSkjema();
+  if (!S.inspirasjon.length) {
+    return html + '<section class="kort tomt"><p class="dempet">Her kommer videoer, innlegg og artikler trenerne deler med laget.</p></section>';
+  }
+  return html + '<div class="feed">' + S.inspirasjon.map(feedKort).join('') + '</div>';
 }
 
 function visMer() {
   const bokser = [
     ['egentrening', 'Egentrening', 'Programmer du kan gjøre selv: ball, sprint og styrke.', IKON.vekt],
-    ['inspirasjon', 'Inspirasjon', 'Videoer, innlegg og artikler fra trenerne.', IKON.lyspaere],
     ['spillmodell', 'Spillmodell', 'Hvordan vi spiller med og uten ball.', IKON.bane],
     ['plan', 'Utviklingsplan 2027', 'Planen for neste sesong.', IKON.tavle]
   ];
@@ -1304,54 +1347,86 @@ function visProgram(id) {
     + '<a class="knapp sekundar" href="#/egentrening">Alle programmer</a>';
 }
 
-/* ---------- Inspirasjon ---------- */
+/* ---------- Feed: det trenerne deler ---------- */
 
+/* Kilde, knappetekst og innebygd spiller for en delt lenke. Spilleren lastes først når noen trykker på videoen. */
 function kildeFor(url) {
   let u = null;
   try {
     u = new URL(url);
   } catch (e) {
-    return { navn: 'Lenke', type: 'lenke', handling: 'lenken', bilde: null };
+    return { navn: 'Lenke', type: 'lenke', handling: 'lenken', bilde: null, innbygg: null, format: '' };
   }
   const vert = u.hostname.replace(/^(www|m)\./, '');
+  const sti = u.pathname;
   if (vert === 'youtu.be' || vert.endsWith('youtube.com')) {
-    const treff = u.pathname.match(/^\/(?:shorts|embed|live)\/([\w-]+)/);
-    const id = vert === 'youtu.be' ? u.pathname.slice(1) : (u.searchParams.get('v') || (treff && treff[1]) || '');
-    const bilde = /^[\w-]{6,20}$/.test(id) ? 'https://i.ytimg.com/vi/' + id + '/hqdefault.jpg' : null;
-    return { navn: 'YouTube', type: 'youtube', handling: 'videoen', bilde };
+    const treff = sti.match(/^\/(?:shorts|embed|live)\/([\w-]+)/);
+    const id = vert === 'youtu.be' ? sti.slice(1).split('/')[0] : (u.searchParams.get('v') || (treff && treff[1]) || '');
+    const gyldig = /^[\w-]{6,20}$/.test(id);
+    return {
+      navn: 'YouTube', type: 'youtube', handling: 'videoen',
+      bilde: gyldig ? 'https://i.ytimg.com/vi/' + id + '/hqdefault.jpg' : null,
+      innbygg: gyldig ? 'https://www.youtube-nocookie.com/embed/' + id + '?autoplay=1&playsinline=1&rel=0' : null,
+      format: sti.startsWith('/shorts/') ? 'staaende' : 'bred'
+    };
   }
-  if (vert.endsWith('vimeo.com')) return { navn: 'Vimeo', type: 'vimeo', handling: 'videoen', bilde: null };
-  if (vert.endsWith('tiktok.com')) return { navn: 'TikTok', type: 'tiktok', handling: 'videoen', bilde: null };
-  if (vert.endsWith('instagram.com')) return { navn: 'Instagram', type: 'instagram', handling: 'innlegget', bilde: null };
-  return { navn: vert, type: 'artikkel', handling: 'lenken', bilde: null };
+  if (vert.endsWith('vimeo.com')) {
+    const m = sti.match(/^\/(?:video\/)?(\d+)(?:\/([0-9a-f]{6,}))?/);
+    const h = (m && m[2]) || u.searchParams.get('h') || '';
+    return {
+      navn: 'Vimeo', type: 'vimeo', handling: 'videoen', bilde: null,
+      innbygg: m ? 'https://player.vimeo.com/video/' + m[1] + '?autoplay=1&dnt=1' + (/^[0-9a-f]+$/.test(h) ? '&h=' + h : '') : null,
+      format: 'bred'
+    };
+  }
+  if (vert.endsWith('tiktok.com')) {
+    const m = sti.match(/\/video\/(\d+)/);
+    return {
+      navn: 'TikTok', type: 'tiktok', handling: 'videoen', bilde: null,
+      innbygg: m ? 'https://www.tiktok.com/player/v1/' + m[1] + '?autoplay=1&rel=0' : null,
+      format: 'staaende'
+    };
+  }
+  if (vert.endsWith('instagram.com')) {
+    const m = sti.match(/^\/(?:[\w.]+\/)?(p|reels?|tv)\/([\w-]+)/);
+    const type = m ? (m[1].startsWith('reel') ? 'reel' : m[1]) : '';
+    return {
+      navn: 'Instagram', type: 'instagram', handling: 'innlegget', bilde: null,
+      innbygg: m ? 'https://www.instagram.com/' + type + '/' + m[2] + '/embed/captioned/' : null,
+      format: type === 'p' ? 'insta' : 'staaende'
+    };
+  }
+  return { navn: vert, type: 'artikkel', handling: 'lenken', bilde: null, innbygg: null, format: '' };
 }
 
-function visInspirasjon() {
-  const trener = S.profil.role === 'trener';
-  let html = '<div class="overskrift"><h1>Inspirasjon</h1><p class="dempet">Videoer, innlegg og artikler trenerne mener er verdt å se.</p></div>';
-  if (trener) {
-    html += '<details class="kort"' + (S.inspirasjon.length ? '' : ' open') + '><summary class="lenkeknapp">Del noe nytt</summary>'
-      + '<form class="skjema" data-skjema="inspirasjon" novalidate>'
-      + '<div class="felt"><label for="iurl">Lenke</label><input id="iurl" name="url" type="url" inputmode="url" autocomplete="off" placeholder="https://"></div>'
-      + '<div class="felt"><label for="ititt">Tittel</label><input id="ititt" name="tittel" maxlength="140" autocomplete="off" placeholder="F.eks. Scanning før mottak"></div>'
-      + '<div class="felt"><label for="inotat">Hvorfor er dette verdt å se?</label><textarea id="inotat" name="notat" maxlength="500" rows="3" placeholder="F.eks. Se hvor ofte han ser seg rundt før ballen kommer."></textarea></div>'
-      + skjemafeil() + '<button class="knapp" type="submit">Del med laget</button></form></details>';
+function erVideo(k) {
+  return ['youtube', 'vimeo', 'tiktok', 'instagram'].includes(k.type);
+}
+
+/* Ett kort i feeden. Videoer spilles i kortet, artikler får et lenkekort. */
+function feedKort(i) {
+  const k = kildeFor(i.url);
+  const lenke = ' href="' + esc(i.url) + '" target="_blank" rel="noopener noreferrer"';
+  const plakat = (k.bilde ? '<img src="' + esc(k.bilde) + '" alt="" loading="lazy">'
+    : '<span class="feed-plakat"><b>' + esc(k.navn) + '</b><span>' + esc(i.title) + '</span></span>')
+    + '<span class="spill" aria-hidden="true"></span>';
+  let media = '';
+  if (k.innbygg) {
+    media = '<button type="button" class="feed-media ' + esc(k.type + ' ' + k.format) + '" data-handling="spill" data-id="' + esc(i.id) + '" aria-label="Spill av: ' + esc(i.title) + '">' + plakat + '</button>';
+  } else if (erVideo(k)) {
+    media = '<a class="feed-media ' + esc(k.type + ' ' + (k.format || 'bred')) + '"' + lenke + ' aria-label="Åpne i ' + esc(k.navn) + '">' + plakat + '</a>';
   }
-  if (!S.inspirasjon.length) {
-    return html + '<section class="kort tomt"><p class="dempet">Ingenting her ennå. Trenerne deler videoer og artikler her.</p></section>';
-  }
-  return html + S.inspirasjon.map((i) => {
-    const k = kildeFor(i.url);
-    const lenke = ' href="' + esc(i.url) + '" target="_blank" rel="noopener noreferrer"';
-    return '<article class="kort insp">'
-      + (k.bilde ? '<a class="insp-bilde"' + lenke + ' aria-label="Se videoen"><img src="' + esc(k.bilde) + '" alt="" loading="lazy"><span class="spill" aria-hidden="true"></span></a>' : '')
-      + '<p class="insp-kilde ' + esc(k.type) + '">' + esc(k.navn) + ' · ' + esc(datoUtenAar(osloDatoStr(new Date(i.created_at)))) + '</p>'
-      + '<h3>' + esc(i.title) + '</h3>'
-      + (i.note ? '<p>' + esc(i.note) + '</p>' : '')
-      + '<div class="insp-handlinger"><a class="knapp sekundar liten-knapp"' + lenke + '>Åpne ' + esc(k.handling) + '</a>'
-      + (trener ? '<button type="button" class="lenkeknapp" data-handling="slett-inspirasjon" data-id="' + esc(i.id) + '">Slett</button>' : '')
-      + '</div></article>';
-  }).join('');
+  const handlinger = [];
+  if (erVideo(k)) handlinger.push('<a class="lenkeknapp"' + lenke + '>Åpne i ' + esc(k.navn) + '</a>');
+  if (S.profil.role === 'trener') handlinger.push('<button type="button" class="lenkeknapp" data-handling="slett-inspirasjon" data-id="' + esc(i.id) + '">Slett</button>');
+  return '<article class="feed-kort">'
+    + '<header class="feed-hode"><img src="img/kolbotn-logo.png" alt="" width="26" height="32">'
+    + '<span><b>Trenerne i TG1</b><span>' + esc(k.navn + ' · ' + datoUtenAar(osloDatoStr(new Date(i.created_at)))) + '</span></span></header>'
+    + media
+    + '<div class="feed-tekst"><h3>' + esc(i.title) + '</h3>' + (i.note ? '<p>' + esc(i.note) + '</p>' : '') + '</div>'
+    + (erVideo(k) ? '' : '<a class="feed-lenke"' + lenke + '><span>' + esc(k.navn) + '</span><span>Les ' + (k.type === 'artikkel' ? 'artikkelen' : 'mer') + ' ›</span></a>')
+    + (handlinger.length ? '<div class="feed-handlinger">' + handlinger.join('') + '</div>' : '')
+    + '</article>';
 }
 
 /* ---------- Min kalender ---------- */
@@ -2337,6 +2412,14 @@ async function vedKlikk(e) {
   } else if (h === 'fase') {
     UI.fase = el.dataset.navn;
     tegn();
+  } else if (h === 'spill') {
+    const i = S.inspirasjon.find((x) => x.id === el.dataset.id);
+    const k = i && kildeFor(i.url);
+    if (!k || !k.innbygg) return;
+    const ramme = document.createElement('div');
+    ramme.className = 'feed-media spiller ' + k.type + ' ' + k.format;
+    ramme.innerHTML = '<iframe src="' + esc(k.innbygg) + '" title="' + esc(i.title) + '" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>';
+    el.replaceWith(ramme);
   } else if (h === 'vis-som') {
     startVisning(el.dataset.rolle);
   } else if (h === 'avslutt-visning') {
@@ -2490,7 +2573,7 @@ const SIDER = {
   hjem: ['Hjem', visHjem],
   mer: ['Mer', visMer],
   egentrening: ['Egentrening', visEgentrening],
-  inspirasjon: ['Inspirasjon', visInspirasjon],
+  inspirasjon: ['Hjem', visHjem],
   oppforing: ['Min kalender', visOppforing],
   uke: ['Denne uka', visUke],
   kalender: ['Kalender', visKalender],

@@ -622,40 +622,6 @@ a.lenkerad:hover { background: #F7FAFC; color: inherit; }
 .smerte { color: var(--rod-tekst); font-weight: 600; }
 .rpe-merke { background: var(--marine); color: var(--hvit); }
 
-/* Hjem */
-
-.hjem {
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  min-height: calc(100vh - 230px);
-  min-height: calc(100dvh - 230px);
-  border-radius: 20px;
-  overflow: hidden;
-  background: var(--marine);
-}
-.hjem img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.hjem::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(11, 42, 69, 0) 30%, rgba(11, 42, 69, 0.55) 60%, rgba(11, 42, 69, 0.95) 100%);
-}
-.hjem-tekst { position: relative; z-index: 1; padding: 24px 20px 26px; color: var(--hvit); }
-.hjem-tekst .overlinje { color: #CFE0EE; }
-.hjem .hilsen { margin: 2px 0 2px; font-size: 18px; font-weight: 600; }
-.hjem h1 {
-  margin: 0 0 6px;
-  font-family: var(--overskrift);
-  font-stretch: condensed;
-  font-weight: 800;
-  font-size: 58px;
-  line-height: 0.95;
-  text-transform: uppercase;
-  color: var(--hvit);
-}
-.hjem-tekst p:last-child { margin: 0; color: #E3EDF6; }
-
 /* Mer */
 
 .bokser { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
@@ -724,29 +690,123 @@ a.lenkerad:hover { background: #F7FAFC; color: inherit; }
 .tabell th:not(:first-child), .tabell td:not(:first-child) { white-space: nowrap; }
 .tabell td:last-child, .tabell th:last-child { padding-right: 0; }
 
-/* Inspirasjon */
+/* Hjem: forklaring på appen og feed */
 
-.insp { gap: 8px; }
-.insp h3 { margin: 0; font-size: 18px; }
-.insp p { margin: 0; }
-.insp-bilde { position: relative; display: block; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #111; }
-.insp-bilde img { width: 100%; height: 100%; object-fit: cover; }
-.spill { position: absolute; left: 50%; top: 50%; width: 56px; height: 56px; margin: -28px 0 0 -28px; border-radius: 50%; background: rgba(0, 0, 0, 0.62); }
+.forklaring { padding: 0; gap: 0; overflow: hidden; }
+.forklaring summary { display: block; list-style: none; cursor: pointer; }
+.forklaring summary::-webkit-details-marker { display: none; }
+.forklaring-banner { position: relative; display: block; aspect-ratio: 16 / 7; background: var(--marine); }
+.forklaring-banner img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.forklaring-banner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(11, 42, 69, 0.05) 20%, rgba(11, 42, 69, 0.9) 100%);
+}
+.forklaring-tittel { position: absolute; left: 16px; right: 56px; bottom: 12px; z-index: 1; display: flex; flex-direction: column; color: var(--hvit); }
+.forklaring-tittel b { font-family: var(--overskrift); font-stretch: condensed; font-weight: 800; font-size: 26px; line-height: 1.05; text-transform: uppercase; }
+.forklaring-tittel small { font-size: 13px; color: #DCE8F2; }
+.forklaring-pil {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+}
+.forklaring-pil::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: 8px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--hvit);
+  border-bottom: 2px solid var(--hvit);
+  transform: rotate(45deg);
+}
+.forklaring[open] .forklaring-pil::after { top: 12px; transform: rotate(-135deg); }
+.forklaring-liste { list-style: none; margin: 0; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; }
+.forklaring-liste li { display: flex; flex-direction: column; gap: 2px; }
+.forklaring-liste strong { color: var(--marine); }
+.forklaring-liste span { font-size: 15px; color: var(--dempet); }
+
+.feed { display: flex; flex-direction: column; gap: 16px; }
+.feed-kort { background: var(--hvit); border: 1px solid var(--kant); border-radius: 18px; overflow: hidden; }
+.feed-hode { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+.feed-hode img { flex: none; width: 26px; height: 32px; }
+.feed-hode > span { display: flex; flex-direction: column; line-height: 1.25; }
+.feed-hode b { font-size: 15px; color: var(--marine); }
+.feed-hode span span { font-size: 12px; color: var(--dempet); }
+
+.feed-media {
+  position: relative;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: #0B0F14;
+  color: var(--hvit);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  overflow: hidden;
+}
+.feed-media.bred { aspect-ratio: 16 / 9; }
+.feed-media.staaende { aspect-ratio: 9 / 16; }
+.feed-media.insta { aspect-ratio: 4 / 5.6; }
+.feed-media img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.feed-media iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.feed-plakat {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 18px 16px;
+  background: linear-gradient(160deg, #0B2A45, #00528A);
+}
+.feed-media.tiktok .feed-plakat { background: linear-gradient(165deg, #111111 55%, #1F3B44 80%, #4A1F2C 100%); }
+.feed-media.instagram .feed-plakat { background: linear-gradient(45deg, #F58529 0%, #DD2A7B 45%, #8134AF 75%, #515BD4 100%); }
+.feed-media.vimeo .feed-plakat { background: linear-gradient(160deg, #0B4F6C, #1AB7EA); }
+.feed-plakat b { font-size: 13px; letter-spacing: 0.6px; text-transform: uppercase; opacity: 0.9; }
+.feed-plakat span { font-family: var(--overskrift); font-stretch: condensed; font-weight: 700; font-size: 28px; line-height: 1.05; }
+.spill { position: absolute; left: 50%; top: 50%; width: 64px; height: 64px; margin: -32px 0 0 -32px; border-radius: 50%; background: rgba(0, 0, 0, 0.55); }
 .spill::after {
   content: "";
   position: absolute;
-  left: 22px;
-  top: 17px;
+  left: 25px;
+  top: 19px;
   border-style: solid;
-  border-width: 11px 0 11px 17px;
+  border-width: 13px 0 13px 20px;
   border-color: transparent transparent transparent #FFFFFF;
 }
-.insp-kilde { font-size: 12px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: var(--dempet); }
-.insp-kilde.youtube { color: #B91C1C; }
-.insp-kilde.tiktok { color: #111111; }
-.insp-kilde.vimeo { color: #0B6E99; }
-.insp-kilde.instagram { color: #A21C6E; }
-.insp-handlinger { display: flex; align-items: center; gap: 16px; margin-top: 4px; }
+.feed-media.spiller { cursor: default; }
+
+.feed-tekst { padding: 12px 14px 4px; display: flex; flex-direction: column; gap: 6px; }
+.feed-tekst h3 { margin: 0; font-size: 18px; }
+.feed-tekst p { margin: 0; }
+.feed-lenke {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 14px 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--kant);
+  background: var(--is);
+  color: inherit;
+  text-decoration: none;
+}
+.feed-lenke span:first-child { font-size: 12px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: var(--dempet); }
+.feed-lenke span:last-child { font-weight: 600; color: var(--bla); }
+.feed-handlinger { display: flex; align-items: center; gap: 18px; padding: 6px 14px 14px; }
+.kort.del summary { cursor: pointer; }
 
 /* Kalender: Laget og Min kalender */
 
