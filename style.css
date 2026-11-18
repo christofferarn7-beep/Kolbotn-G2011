@@ -744,6 +744,7 @@ a.lenkerad:hover { background: #F7FAFC; color: inherit; }
 .insp-kilde { font-size: 12px; font-weight: 700; letter-spacing: 0.4px; text-transform: uppercase; color: var(--dempet); }
 .insp-kilde.youtube { color: #B91C1C; }
 .insp-kilde.tiktok { color: #111111; }
+.insp-kilde.vimeo { color: #0B6E99; }
 .insp-kilde.instagram { color: #A21C6E; }
 .insp-handlinger { display: flex; align-items: center; gap: 16px; margin-top: 4px; }
 

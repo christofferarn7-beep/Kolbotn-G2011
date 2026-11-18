@@ -1320,6 +1320,7 @@ function kildeFor(url) {
     const bilde = /^[\w-]{6,20}$/.test(id) ? 'https://i.ytimg.com/vi/' + id + '/hqdefault.jpg' : null;
     return { navn: 'YouTube', type: 'youtube', handling: 'videoen', bilde };
   }
+  if (vert.endsWith('vimeo.com')) return { navn: 'Vimeo', type: 'vimeo', handling: 'videoen', bilde: null };
   if (vert.endsWith('tiktok.com')) return { navn: 'TikTok', type: 'tiktok', handling: 'videoen', bilde: null };
   if (vert.endsWith('instagram.com')) return { navn: 'Instagram', type: 'instagram', handling: 'innlegget', bilde: null };
   return { navn: vert, type: 'artikkel', handling: 'lenken', bilde: null };
