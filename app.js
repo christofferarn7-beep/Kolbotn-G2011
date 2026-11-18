@@ -46,6 +46,23 @@ const MAL_STATUS = {
 };
 const BRA_EKSEMPEL = ['F.eks. vant mange andreballer', 'F.eks. turte å bruke venstre', 'F.eks. snakket mye bakover'];
 
+/* Min kalender */
+const KAL_KATEGORI = {
+  skole: { navn: 'Skole', klasse: 'kat-skole' },
+  kroppsoving: { navn: 'Kroppsøving', klasse: 'kat-belastning' },
+  trening: { navn: 'Annen trening', klasse: 'kat-belastning' },
+  kamp: { navn: 'Kamp', klasse: 'kat-belastning' },
+  mat: { navn: 'Måltid', klasse: 'kat-mat' },
+  sovn: { navn: 'Søvn', klasse: 'kat-sovn' },
+  annet: { navn: 'Annet', klasse: 'kat-annet' }
+};
+const BELASTNING_KAT = ['kroppsoving', 'trening', 'kamp'];
+const UKEDAG_LANG = ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag', 'Søndag'];
+const UKEDAG_KORT = ['Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør', 'Søn'];
+
+/* Egentrening */
+const PROGRAM_GRUPPER = [['ball', 'Med ball'], ['sprint', 'Sprint'], ['styrke', 'Styrke'], ['annet', 'Annet']];
+
 const IKON = {
   hus: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>',
   kalender: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
@@ -58,7 +75,11 @@ const IKON = {
   hvorfor: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6V14"/><path d="M12 17.5v.01"/></svg>',
   motstander: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 5-3.5 8.5-7 10-3.5-1.5-7-5-7-10V6z"/></svg>',
   info: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.01"/></svg>',
-  sjekk: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'
+  sjekk: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
+  uke: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  meny: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg>',
+  vekt: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.5 7v10M17.5 7v10M3.5 9.5v5M20.5 9.5v5M6.5 12h11"/></svg>',
+  lyspaere: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.6 1.1 1.3 1.1 2.1V16h5v-.1c0-.8.4-1.5 1.1-2.1A6 6 0 0 0 12 3z"/></svg>'
 };
 
 /* ---------- Hjelpefunksjoner ---------- */
@@ -96,8 +117,26 @@ function md(tekst) {
       iListe = false;
     }
   };
+  /* Enkle tabeller: | a | b |, første rad er overskrift, skillelinjen med --- hoppes over. */
+  let tabell = [];
+  const skrivTabell = () => {
+    if (!tabell.length) return;
+    const [hode, ...rader] = tabell;
+    html += '<div class="tabell"><table><thead><tr>' + hode.map((c) => '<th>' + mdInline(c) + '</th>').join('') + '</tr></thead>'
+      + (rader.length ? '<tbody>' + rader.map((r) => '<tr>' + r.map((c) => '<td>' + mdInline(c) + '</td>').join('') + '</tr>').join('') + '</tbody>' : '')
+      + '</table></div>';
+    tabell = [];
+  };
   for (const linje of linjer) {
     const t = linje.trim();
+    if (t.length > 1 && t.startsWith('|') && t.endsWith('|')) {
+      skrivAvsnitt();
+      lukkListe();
+      const celler = t.slice(1, -1).split('|').map((c) => c.trim());
+      if (!celler.every((c) => /^:?-{3,}:?$/.test(c))) tabell.push(celler);
+      continue;
+    }
+    skrivTabell();
     if (!t) {
       skrivAvsnitt();
       lukkListe();
@@ -124,6 +163,7 @@ function md(tekst) {
     lukkListe();
     avsnitt.push(t);
   }
+  skrivTabell();
   skrivAvsnitt();
   lukkListe();
   return html;
@@ -569,6 +609,9 @@ const S = {
   hoyder: [],
   logger: [],
   mal: [],
+  kalender: [],
+  programmer: [],
+  inspirasjon: [],
   barn: [],
   trener: null,
   lastFeil: ''
@@ -594,6 +637,9 @@ function nullstill() {
   S.hoyder = [];
   S.logger = [];
   S.mal = [];
+  S.kalender = [];
+  S.programmer = [];
+  S.inspirasjon = [];
   S.barn = [];
   S.trener = null;
   S.lastFeil = '';
@@ -611,13 +657,17 @@ async function lastAlt() {
   const profiler = await api.rest('profiles?select=id,username,full_name,role,player_id&id=eq.' + encodeURIComponent(uid));
   S.profil = (profiler && profiler[0]) || null;
   if (!S.profil) return;
-  const [perioder, hendelser, sider] = await Promise.all([
+  const [perioder, hendelser, sider, programmer, inspirasjon] = await Promise.all([
     api.rest('periods?select=*&order=start_date.asc'),
     api.rest('events?select=*&order=starts_at.asc'),
-    api.rest('pages?select=slug,title,body,audience,sort&order=sort.asc')
+    api.rest('pages?select=slug,title,body,audience,sort&order=sort.asc'),
+    api.rest('programs?select=*&order=sort.asc'),
+    api.rest('inspiration?select=*&order=created_at.desc&limit=200')
   ]);
   S.perioder = perioder || [];
   S.hendelser = hendelser || [];
+  S.programmer = programmer || [];
+  S.inspirasjon = inspirasjon || [];
   S.sider = {};
   for (const side of sider || []) S.sider[side.slug] = side;
   if (S.profil.role === 'spiller') await lastSpiller();
@@ -627,18 +677,20 @@ async function lastAlt() {
 
 async function lastSpiller() {
   const pid = encodeURIComponent(S.profil.player_id);
-  const [spillere, samtykker, hoyder, logger, mal] = await Promise.all([
+  const [spillere, samtykker, hoyder, logger, mal, kalender] = await Promise.all([
     api.rest('players?select=id,full_name,position&id=eq.' + pid),
     api.rest('consents?select=player_id,version,accepted_at,withdrawn_at&player_id=eq.' + pid),
     api.rest('heights?select=id,measured_on,height_cm,created_at&player_id=eq.' + pid + '&order=measured_on.desc&limit=24'),
     api.rest('session_logs?select=*&player_id=eq.' + pid + '&order=created_at.desc&limit=100'),
-    api.rest('goals?select=*&player_id=eq.' + pid + '&order=created_at.asc')
+    api.rest('goals?select=*&player_id=eq.' + pid + '&order=created_at.asc'),
+    api.rest('personal_entries?select=*&player_id=eq.' + pid + '&order=starts.asc')
   ]);
   S.spiller = (spillere && spillere[0]) || null;
   S.samtykker = samtykker || [];
   S.hoyder = hoyder || [];
   S.logger = logger || [];
   S.mal = mal || [];
+  S.kalender = kalender || [];
 }
 
 async function lastForelder() {
@@ -653,7 +705,7 @@ async function lastForelder() {
 
 async function lastTrener() {
   const fra = new Date(Date.now() - 120 * DAG_MS).toISOString();
-  const [spillere, profiler, lenker, samtykker, koder, soner, logger, mal] = await Promise.all([
+  const [spillere, profiler, lenker, samtykker, koder, soner, logger, mal, kalender] = await Promise.all([
     api.rest('players?select=id,full_name,position,active&order=full_name.asc'),
     api.rest('profiles?select=id,username,full_name,role,player_id&order=full_name.asc'),
     api.rest('parent_links?select=parent_id,player_id'),
@@ -661,7 +713,8 @@ async function lastTrener() {
     api.rest('invites?select=code,purpose,role,full_name,player_id,user_id,created_at,expires_at,used_at&order=created_at.desc&limit=300'),
     api.rest('vekstsoner?select=*'),
     api.rest('session_logs?select=*&created_at=gte.' + encodeURIComponent(fra) + '&order=created_at.desc&limit=5000'),
-    api.rest('goals?select=*&order=created_at.asc')
+    api.rest('goals?select=*&order=created_at.asc'),
+    api.rest('personal_entries?select=*&order=starts.asc&limit=5000')
   ]);
   S.trener = {
     spillere: spillere || [],
@@ -671,7 +724,8 @@ async function lastTrener() {
     koder: koder || [],
     soner: soner || [],
     logger: logger || [],
-    mal: mal || []
+    mal: mal || [],
+    kalender: kalender || []
   };
 }
 
@@ -756,21 +810,29 @@ function visLastFeil() {
 /* ---------- Visninger: rammen ---------- */
 
 /* Undersider markerer fanen de hører til. */
-const FANE_FOR = { plan: 'spillmodell', logg: 'meg', mal: 'meg', okt: 'trener', spiller: 'trener' };
+const FANE_FOR = {
+  plan: 'mer', spillmodell: 'mer', egentrening: 'mer', inspirasjon: 'mer',
+  logg: 'meg', mal: 'meg', okt: 'trener', spiller: 'trener', oppforing: 'kalender'
+};
+
+function faneFor(aktiv) {
+  if (aktiv === 'mal' && S.profil.role === 'trener') return 'trener';
+  return FANE_FOR[aktiv] || aktiv;
+}
 
 function ramme(aktiv, innhold) {
   const faner = [
-    ['uke', 'Denne uka', IKON.hus],
+    ['hjem', 'Hjem', IKON.hus],
+    ['uke', 'Denne uka', IKON.uke],
     ['kalender', 'Kalender', IKON.kalender],
-    ['spillmodell', 'Spillmodell', IKON.bane]
+    S.profil.role === 'trener' ? ['trener', 'Trener', IKON.tavle] : ['meg', 'Meg', IKON.person],
+    ['mer', 'Mer', IKON.meny]
   ];
-  if (S.profil.role === 'trener') faner.push(['trener', 'Trener', IKON.tavle]);
-  faner.push(['meg', 'Meg', IKON.person]);
-  const fane = FANE_FOR[aktiv] || aktiv;
+  const fane = faneFor(aktiv);
   const meny = faner.map(([rute, navn, ikon]) => '<a class="fane" href="#/' + rute + '"'
     + (rute === fane ? ' aria-current="page"' : '') + '>' + ikon + esc(navn) + '</a>').join('');
   const melding = UI.melding ? '<p class="varsel ok" role="status">' + esc(UI.melding) + '</p>' : '';
-  return '<header class="topp"><a class="merke" href="#/uke"><img src="img/kolbotn-logo.png" alt="" width="26" height="32"><span>Kolbotn G2011</span></a>'
+  return '<header class="topp"><a class="merke" href="#/hjem"><img src="img/kolbotn-logo.png" alt="" width="26" height="32"><span>Kolbotn G2011</span></a>'
     + '<a class="ikonknapp" href="#/meg" aria-label="Min side">' + IKON.person + '</a></header>'
     + '<div class="striper" aria-hidden="true"></div>'
     + visningsBanner()
@@ -904,7 +966,11 @@ function hoydePaaminnelse() {
 /* ---------- Kalender ---------- */
 
 function visKalender() {
-  let html = '<div class="overskrift"><h1>Kalender</h1><p class="dempet">Treninger, kamper og periodene i årshjulet</p></div>';
+  if (S.profil.role === 'spiller' && ruteParam('vis') === 'min') {
+    return '<div class="overskrift"><h1>Kalender</h1><p class="dempet">Din uke: lagets økter og det du har lagt inn selv</p></div>'
+      + kalenderValg() + visMinKalender();
+  }
+  let html = '<div class="overskrift"><h1>Kalender</h1><p class="dempet">Treninger, kamper og periodene i årshjulet</p></div>' + kalenderValg();
   if (!S.perioder.length) return html + '<section class="kort tomt"><p>Ingen perioder lagt inn ennå.</p></section>';
   const standard = periodeFor(S.perioder, idagStr()) || S.perioder[S.perioder.length - 1];
   const valgt = S.perioder.find((p) => p.id === UI.periode) || standard;
@@ -1180,6 +1246,237 @@ function megForelder() {
   }).join('');
 }
 
+/* ---------- Hjem og Mer ---------- */
+
+function visHjem() {
+  const fornavn = String(S.profil.full_name || '').trim().split(/\s+/)[0] || '';
+  return '<section class="hjem">'
+    + '<img src="img/lag-feiring.jpg" alt="TG1 feirer med pokalen">'
+    + '<div class="hjem-tekst"><p class="overlinje">Kolbotn G2011 · TG1</p>'
+    + (fornavn ? '<p class="hilsen">Hei, ' + esc(fornavn) + '!</p>' : '')
+    + '<h1>Coming soon</h1>'
+    + '<p>Her kommer mer fra laget.</p></div></section>';
+}
+
+function visMer() {
+  const bokser = [
+    ['egentrening', 'Egentrening', 'Programmer du kan gjøre selv: ball, sprint og styrke.', IKON.vekt],
+    ['inspirasjon', 'Inspirasjon', 'Videoer, innlegg og artikler fra trenerne.', IKON.lyspaere],
+    ['spillmodell', 'Spillmodell', 'Hvordan vi spiller med og uten ball.', IKON.bane],
+    ['plan', 'Utviklingsplan 2027', 'Planen for neste sesong.', IKON.tavle]
+  ];
+  if (S.profil.role === 'trener') bokser.push(['meg', 'Meg', 'Brukernavn, passord og logg ut.', IKON.person]);
+  return '<div class="overskrift"><h1>Mer</h1></div><div class="bokser">'
+    + bokser.map(([rute, navn, tekst, ikon]) => '<a class="boks" href="#/' + rute + '"><span class="boks-ikon">' + ikon + '</span>'
+      + '<span class="boks-navn">' + esc(navn) + '</span><span class="boks-tekst">' + esc(tekst) + '</span></a>').join('')
+    + '</div>';
+}
+
+/* ---------- Egentrening ---------- */
+
+function visEgentrening() {
+  const id = ruteParam('id');
+  if (id) return visProgram(id);
+  let html = '<div class="overskrift"><h1>Egentrening</h1><p class="dempet">Opplegg du kan gjøre på egen hånd eller med en makker. Trykk på et program for hele økta.</p></div>';
+  if (!S.programmer.length) return html + '<section class="kort tomt"><p class="dempet">Programmene kommer her.</p></section>';
+  for (const [kat, navn] of PROGRAM_GRUPPER) {
+    const liste = S.programmer.filter((p) => p.category === kat);
+    if (!liste.length) continue;
+    html += '<section class="uke"><h2>' + esc(navn) + '</h2><div class="programliste">'
+      + liste.map((p) => '<a class="program-boks" href="#/egentrening?id=' + esc(encodeURIComponent(p.id)) + '">'
+        + '<span class="program-meta">' + esc([p.minutes ? p.minutes + ' min' : '', p.summary || ''].filter(Boolean).join(' · ')) + '</span>'
+        + '<span class="program-navn">' + esc(p.title) + '</span>'
+        + (p.purpose ? '<span class="program-tekst">' + esc(p.purpose) + '</span>' : '')
+        + '<span class="pil" aria-hidden="true">›</span></a>').join('')
+      + '</div></section>';
+  }
+  return html;
+}
+
+function visProgram(id) {
+  const p = S.programmer.find((x) => x.id === id);
+  if (!p) return '<div class="overskrift"><h1>Fant ikke programmet</h1></div><a class="knapp sekundar" href="#/egentrening">Til egentrening</a>';
+  const gruppe = (PROGRAM_GRUPPER.find(([k]) => k === p.category) || [null, 'Annet'])[1];
+  return '<div class="overskrift"><p class="overlinje">Egentrening · ' + esc(gruppe) + '</p><h1>' + esc(p.title) + '</h1>'
+    + '<p class="dempet">' + esc([p.minutes ? p.minutes + ' min' : '', p.summary || ''].filter(Boolean).join(' · ')) + '</p></div>'
+    + (p.purpose ? '<section class="kort tips"><p class="overlinje">Hensikt</p><p>' + esc(p.purpose) + '</p></section>' : '')
+    + '<section class="kort tekst-md program">' + md(p.body) + '</section>'
+    + '<a class="knapp sekundar" href="#/egentrening">Alle programmer</a>';
+}
+
+/* ---------- Inspirasjon ---------- */
+
+function kildeFor(url) {
+  let u = null;
+  try {
+    u = new URL(url);
+  } catch (e) {
+    return { navn: 'Lenke', type: 'lenke', handling: 'lenken', bilde: null };
+  }
+  const vert = u.hostname.replace(/^(www|m)\./, '');
+  if (vert === 'youtu.be' || vert.endsWith('youtube.com')) {
+    const treff = u.pathname.match(/^\/(?:shorts|embed|live)\/([\w-]+)/);
+    const id = vert === 'youtu.be' ? u.pathname.slice(1) : (u.searchParams.get('v') || (treff && treff[1]) || '');
+    const bilde = /^[\w-]{6,20}$/.test(id) ? 'https://i.ytimg.com/vi/' + id + '/hqdefault.jpg' : null;
+    return { navn: 'YouTube', type: 'youtube', handling: 'videoen', bilde };
+  }
+  if (vert.endsWith('tiktok.com')) return { navn: 'TikTok', type: 'tiktok', handling: 'videoen', bilde: null };
+  if (vert.endsWith('instagram.com')) return { navn: 'Instagram', type: 'instagram', handling: 'innlegget', bilde: null };
+  return { navn: vert, type: 'artikkel', handling: 'lenken', bilde: null };
+}
+
+function visInspirasjon() {
+  const trener = S.profil.role === 'trener';
+  let html = '<div class="overskrift"><h1>Inspirasjon</h1><p class="dempet">Videoer, innlegg og artikler trenerne mener er verdt å se.</p></div>';
+  if (trener) {
+    html += '<details class="kort"' + (S.inspirasjon.length ? '' : ' open') + '><summary class="lenkeknapp">Del noe nytt</summary>'
+      + '<form class="skjema" data-skjema="inspirasjon" novalidate>'
+      + '<div class="felt"><label for="iurl">Lenke</label><input id="iurl" name="url" type="url" inputmode="url" autocomplete="off" placeholder="https://"></div>'
+      + '<div class="felt"><label for="ititt">Tittel</label><input id="ititt" name="tittel" maxlength="140" autocomplete="off" placeholder="F.eks. Scanning før mottak"></div>'
+      + '<div class="felt"><label for="inotat">Hvorfor er dette verdt å se?</label><textarea id="inotat" name="notat" maxlength="500" rows="3" placeholder="F.eks. Se hvor ofte han ser seg rundt før ballen kommer."></textarea></div>'
+      + skjemafeil() + '<button class="knapp" type="submit">Del med laget</button></form></details>';
+  }
+  if (!S.inspirasjon.length) {
+    return html + '<section class="kort tomt"><p class="dempet">Ingenting her ennå. Trenerne deler videoer og artikler her.</p></section>';
+  }
+  return html + S.inspirasjon.map((i) => {
+    const k = kildeFor(i.url);
+    const lenke = ' href="' + esc(i.url) + '" target="_blank" rel="noopener noreferrer"';
+    return '<article class="kort insp">'
+      + (k.bilde ? '<a class="insp-bilde"' + lenke + ' aria-label="Se videoen"><img src="' + esc(k.bilde) + '" alt="" loading="lazy"><span class="spill" aria-hidden="true"></span></a>' : '')
+      + '<p class="insp-kilde ' + esc(k.type) + '">' + esc(k.navn) + ' · ' + esc(datoUtenAar(osloDatoStr(new Date(i.created_at)))) + '</p>'
+      + '<h3>' + esc(i.title) + '</h3>'
+      + (i.note ? '<p>' + esc(i.note) + '</p>' : '')
+      + '<div class="insp-handlinger"><a class="knapp sekundar liten-knapp"' + lenke + '>Åpne ' + esc(k.handling) + '</a>'
+      + (trener ? '<button type="button" class="lenkeknapp" data-handling="slett-inspirasjon" data-id="' + esc(i.id) + '">Slett</button>' : '')
+      + '</div></article>';
+  }).join('');
+}
+
+/* ---------- Min kalender ---------- */
+
+function tidKort(t) {
+  return t ? String(t).slice(0, 5).replace(':', '.') : '';
+}
+
+function tidInput(t) {
+  return t ? String(t).slice(0, 5) : '';
+}
+
+function ukeFraParam() {
+  const p = ruteParam('uke');
+  return mandagFor(/^\d{4}-\d{2}-\d{2}$/.test(p) ? datoFraStr(p) : new Date());
+}
+
+function ukeNavigasjon(mandag, lenke) {
+  const forrige = new Date(mandag.getTime() - 7 * DAG_MS).toISOString().slice(0, 10);
+  const neste = new Date(mandag.getTime() + 7 * DAG_MS).toISOString().slice(0, 10);
+  return '<div class="ukenav"><a class="ukepil" href="' + esc(lenke + forrige) + '" aria-label="Forrige uke">‹</a>'
+    + '<p><strong>Uke ' + isoUke(mandag) + '</strong><span>' + esc(ukeTekst(mandag)) + '</span></p>'
+    + '<a class="ukepil" href="' + esc(lenke + neste) + '" aria-label="Neste uke">›</a></div>';
+}
+
+/* Ukeplan med lagets økter og spillerens egne oppføringer, dag for dag. */
+function ukeplan(mandag, oppforinger, redigerbar) {
+  const idag = idagStr();
+  let html = '<div class="ukeplan">';
+  for (let i = 0; i < 7; i++) {
+    const dag = new Date(mandag.getTime() + i * DAG_MS);
+    const datoStr = dag.toISOString().slice(0, 10);
+    const poster = [];
+    for (const h of S.hendelser) {
+      if (h.status === 'avlyst' || osloDatoStr(new Date(h.starts_at)) !== datoStr) continue;
+      poster.push({ sort: klokke(h.starts_at), tid: tidTekst(h), navn: h.title, under: h.location || '', klasse: 'kat-lag' });
+    }
+    for (const o of oppforinger) {
+      if (!((o.weekdays && o.weekdays.includes(i + 1)) || o.on_date === datoStr)) continue;
+      const kat = KAL_KATEGORI[o.category] || KAL_KATEGORI.annet;
+      poster.push({
+        sort: tidKort(o.starts),
+        tid: tidKort(o.starts) + (o.ends ? '–' + tidKort(o.ends) : ''),
+        navn: o.title || kat.navn,
+        under: [o.title ? kat.navn : '', o.note || ''].filter(Boolean).join(' · '),
+        klasse: kat.klasse,
+        id: o.id,
+        fast: Boolean(o.weekdays)
+      });
+    }
+    poster.sort((a, b) => a.sort.localeCompare(b.sort));
+    html += '<section class="dagblokk' + (datoStr === idag ? ' idag' : '') + '"><h3>' + esc(UKEDAG_LANG[i])
+      + ' <span>' + pad(dag.getUTCDate()) + '.' + pad(dag.getUTCMonth() + 1) + (datoStr === idag ? ' · i dag' : '') + '</span></h3>';
+    html += poster.length
+      ? '<ul class="dagliste">' + poster.map((p) => {
+        const inni = '<span class="tid">' + esc(p.tid) + '</span><span class="post-tekst"><span class="post-navn">' + esc(p.navn) + '</span>'
+          + (p.under ? '<span class="post-under">' + esc(p.under) + '</span>' : '') + '</span>'
+          + (p.fast ? '<span class="fast" aria-label="Hver uke">↻</span>' : '');
+        return '<li class="post ' + p.klasse + '">'
+          + (redigerbar && p.id ? '<a href="#/oppforing?id=' + esc(encodeURIComponent(p.id)) + '">' + inni + '</a>' : '<div>' + inni + '</div>') + '</li>';
+      }).join('') + '</ul>'
+      : '<p class="dempet liten">Ingenting lagt inn</p>';
+    html += '</section>';
+  }
+  return html + '</div>';
+}
+
+function kalenderValg() {
+  if (S.profil.role !== 'spiller') return '';
+  const min = ruteParam('vis') === 'min';
+  return '<nav class="segment" aria-label="Velg kalender"><a href="#/kalender"' + (min ? '' : ' aria-current="page"') + '>Laget</a>'
+    + '<a href="#/kalender?vis=min"' + (min ? ' aria-current="page"' : '') + '>Min kalender</a></nav>';
+}
+
+function utenSamtykkeKalender() {
+  return '<section class="kort tomt"><p>Foresatte må gi samtykke før du kan bruke Min kalender.</p>'
+    + '<p class="dempet liten">Be dem logge inn med koden de har fått fra treneren, og godkjenne under «Meg».</p></section>';
+}
+
+function visMinKalender() {
+  if (!harSamtykke(S.profil.player_id)) return utenSamtykkeKalender();
+  const mandag = ukeFraParam();
+  let html = '';
+  if (!S.kalender.length) {
+    html += '<section class="kort tips"><p class="overlinje">Kom i gang</p>'
+      + '<p>Legg inn det som er fast hver uke: skole, kroppsøving, annen trening, måltider og når du legger deg.</p>'
+      + '<p class="dempet liten">Treneren ser kalenderen din og kan tilpasse treningen. Foreldre ser den ikke.</p></section>';
+  }
+  html += '<a class="knapp" href="#/oppforing">Legg til</a>'
+    + ukeNavigasjon(mandag, '#/kalender?vis=min&uke=')
+    + ukeplan(mandag, S.kalender, true);
+  if (S.kalender.length) {
+    html += '<p class="dempet liten">Trykk på noe du har lagt inn for å endre det. ↻ betyr at det gjentas hver uke. Treneren ser kalenderen din, foreldre gjør det ikke.</p>';
+  }
+  return html;
+}
+
+function visOppforing() {
+  const id = ruteParam('id');
+  const o = id ? S.kalender.find((x) => x.id === id) : null;
+  let html = '<div class="overskrift"><p class="overlinje">Min kalender</p><h1>' + (o ? 'Endre' : 'Legg til') + '</h1></div>';
+  if (id && !o) return html + '<section class="kort tomt"><p>Fant ikke det du har lagt inn.</p></section><a class="knapp sekundar" href="#/kalender?vis=min">Tilbake</a>';
+  if (!harSamtykke(S.profil.player_id)) return html + utenSamtykkeKalender();
+  const v = o || { category: 'skole', weekdays: null, on_date: null, starts: '', ends: '', title: '', note: '' };
+  const dager = v.weekdays || [];
+  html += '<form class="skjema" data-skjema="oppforing" novalidate><input type="hidden" name="id" value="' + esc(v.id || '') + '">'
+    + '<section class="kort"><fieldset class="felt"><legend>Hva gjelder det?</legend><div class="valg-rad kategorier">'
+    + Object.entries(KAL_KATEGORI).map(([k, kat]) => '<label class="valg"><input type="radio" name="kat" value="' + k + '"'
+      + (v.category === k ? ' checked' : '') + '><span>' + esc(kat.navn) + '</span></label>').join('')
+    + '</div></fieldset>'
+    + '<div class="felt"><label for="onavn">Navn (valgfritt)</label><input id="onavn" name="navn" maxlength="60" autocomplete="off" placeholder="F.eks. Hospitering med G16" value="' + esc(v.title || '') + '"></div>'
+    + '</section><section class="kort">'
+    + '<fieldset class="felt"><legend>Hver uke</legend><div class="valg-rad ukedager">'
+    + UKEDAG_KORT.map((d, i) => '<label class="valg"><input type="checkbox" name="dag' + (i + 1) + '" value="1"'
+      + (dager.includes(i + 1) ? ' checked' : '') + '><span>' + d + '</span></label>').join('')
+    + '</div></fieldset>'
+    + '<div class="felt"><label for="odato">Eller én bestemt dag</label><input id="odato" name="dato" type="date" value="' + esc(v.on_date || '') + '"></div>'
+    + '<div class="to-kol"><div class="felt"><label for="ofra">Fra</label><input id="ofra" name="fra" type="time" value="' + esc(tidInput(v.starts)) + '"></div>'
+    + '<div class="felt"><label for="otil">Til (valgfritt)</label><input id="otil" name="til" type="time" value="' + esc(tidInput(v.ends)) + '"></div></div>'
+    + '<p class="dempet liten">Søvn: «Fra» er når du legger deg, og «Til» er når du står opp.</p>'
+    + '<div class="felt"><label for="onotat">Notat (valgfritt)</label><input id="onotat" name="notat" maxlength="200" autocomplete="off" value="' + esc(v.note || '') + '"></div>'
+    + '</section>' + skjemafeil() + '<button class="knapp" type="submit">Lagre</button></form>';
+  if (o) html += '<button type="button" class="lenkeknapp" data-handling="slett-oppforing" data-id="' + esc(o.id) + '">Slett fra kalenderen</button>';
+  return html + '<a class="lenkeknapp" href="#/kalender?vis=min">Avbryt</a>';
+}
+
 /* ---------- Logg etter økt ---------- */
 
 function visLogg() {
@@ -1422,6 +1719,14 @@ function visSpiller() {
       + logger.slice(0, 8).map((x) => loggKort(x.l, dagInfo(x.h.starts_at).lang)).join('') + '</section>';
   }
 
+  /* Spillerens egen kalender sammen med lagets økter */
+  const kal = (t.kalender || []).filter((o) => o.player_id === s.id);
+  const mandag = ukeFraParam();
+  html += '<section class="uke"><h2>Ukeplan</h2>'
+    + (kal.length ? '' : '<p class="dempet liten">' + esc(s.full_name.split(' ')[0]) + ' har ikke lagt inn noe i Min kalender ennå.</p>')
+    + ukeNavigasjon(mandag, '#/spiller?id=' + encodeURIComponent(s.id) + '&uke=')
+    + ukeplan(mandag, kal, false) + '</section>';
+
   if (sone && sone.sist_malt) {
     html += '<section class="kort"><p class="overlinje">Høyde</p><p><strong>' + esc(cm(sone.hoyde_cm)) + ' cm</strong> · målt ' + esc(datoUtenAar(sone.sist_malt)) + '</p>'
       + (sone.vekst_siste_mnd != null ? '<p class="dempet liten">' + esc(medFortegn(sone.vekst_siste_mnd)) + ' cm siste måned</p>' : '') + '</section>';
@@ -1512,8 +1817,29 @@ function visTrener() {
     : '<section class="kort tomt"><p class="dempet">Etter første økt ser du loggene til spillerne her: belastning, smerter og tilbakemeldinger.</p></section>';
   html += '</section>';
 
+  /* Kroppsøving, annen trening og kamper spillerne har lagt inn for i dag */
+  const kalender = t.kalender || [];
+  if (kalender.length) {
+    const idag = idagStr();
+    const idagNr = datoFraStr(idag).getUTCDay() || 7;
+    const iDag = kalender
+      .filter((o) => BELASTNING_KAT.includes(o.category) && ((o.weekdays && o.weekdays.includes(idagNr)) || o.on_date === idag))
+      .sort((a, b) => tidKort(a.starts).localeCompare(tidKort(b.starts)));
+    html += '<section class="uke"><h2>Annen belastning i dag</h2>';
+    html += iDag.length
+      ? '<div class="liste">' + iDag.map((o) => {
+        const kat = KAL_KATEGORI[o.category];
+        return '<a class="rad lenkerad" href="#/spiller?id=' + esc(encodeURIComponent(o.player_id)) + '"><div class="rad-tekst">'
+          + '<span class="navn">' + esc(spillerNavn(o.player_id)) + '</span>'
+          + '<span class="under">' + esc(kat.navn + (o.title ? ': ' + o.title : '') + ' · ' + tidKort(o.starts) + (o.ends ? '–' + tidKort(o.ends) : '')) + '</span>'
+          + '</div><span class="pil" aria-hidden="true">›</span></a>';
+      }).join('') + '</div>'
+      : '<section class="kort tomt"><p class="dempet">Ingen har lagt inn kroppsøving, annen trening eller kamp i dag.</p></section>';
+    html += '</section>';
+  }
+
   const soner = new Map(t.soner.map((s) => [s.player_id, s]));
-  html += '<section class="uke"><h2>Spillere</h2><p class="dempet liten">Trykk på en spiller for mål, logger og belastning.</p><div class="liste">'
+  html += '<section class="uke"><h2>Spillere</h2><p class="dempet liten">Trykk på en spiller for mål, ukeplan, logger og belastning.</p><div class="liste">'
     + aktiveSpillere.map((s) => {
       const foreldre = t.lenker.filter((l) => l.player_id === s.id).length;
       const samtykke = t.samtykker.some((c) => c.player_id === s.id && !c.withdrawn_at);
@@ -1608,6 +1934,17 @@ function demoMal() {
   ];
 }
 
+function demoKalender() {
+  const felles = { player_id: DEMO_SPILLER.id, on_date: null, note: null, title: null, ends: null };
+  return [
+    Object.assign({}, felles, { id: 'demo-kal-1', category: 'skole', weekdays: [1, 2, 3, 4, 5], starts: '08:30:00', ends: '15:00:00' }),
+    Object.assign({}, felles, { id: 'demo-kal-2', category: 'kroppsoving', weekdays: [2], starts: '10:00:00', ends: '11:30:00' }),
+    Object.assign({}, felles, { id: 'demo-kal-3', category: 'trening', title: 'Hospitering med G16', weekdays: [4], starts: '18:00:00', ends: '19:30:00' }),
+    Object.assign({}, felles, { id: 'demo-kal-4', category: 'mat', title: 'Middag', weekdays: [1, 2, 3, 4, 5], starts: '15:30:00' }),
+    Object.assign({}, felles, { id: 'demo-kal-5', category: 'sovn', title: 'Legger meg', weekdays: [1, 2, 3, 4, 5, 6, 7], starts: '22:30:00', ends: '07:00:00' })
+  ];
+}
+
 function visningsBanner() {
   if (!UI.visSom) return '';
   return '<div class="visning" role="status"><p><strong>Du ser siden som ' + (UI.visSom === 'spiller' ? 'spiller' : 'forelder') + '</strong>'
@@ -1620,7 +1957,7 @@ function startVisning(rolle) {
   if (rolle !== 'spiller' && rolle !== 'forelder') return;
   UI.ekte = {
     profil: S.profil, sider: S.sider, spiller: S.spiller, samtykker: S.samtykker, hoyder: S.hoyder,
-    barn: S.barn, hendelser: S.hendelser, logger: S.logger, mal: S.mal
+    barn: S.barn, hendelser: S.hendelser, logger: S.logger, mal: S.mal, kalender: S.kalender
   };
   UI.visSom = rolle;
   UI.kodeResultat = null;
@@ -1635,6 +1972,7 @@ function startVisning(rolle) {
     }
     S.logger = [];
     S.mal = demoMal();
+    S.kalender = demoKalender();
     S.barn = [];
   } else {
     S.profil = { id: 'demo-profil', username: 'kari.n', full_name: 'Kari Nordmann', role: 'forelder', player_id: null };
@@ -1643,9 +1981,10 @@ function startVisning(rolle) {
     S.hoyder = [];
     S.logger = [];
     S.mal = [];
+    S.kalender = [];
     S.barn = [DEMO_SPILLER];
   }
-  gaTil(rolle === 'forelder' ? 'meg' : 'uke');
+  gaTil(rolle === 'forelder' ? 'meg' : 'hjem');
 }
 
 function avsluttVisning() {
@@ -1671,7 +2010,7 @@ const SKJEMA = {
     await api.loggInn(brukernavn, d.passord);
     await lastAlt();
     UI.melding = '';
-    gaTil('uke');
+    gaTil('hjem');
   },
 
   async 'forste-gang'(d) {
@@ -1684,7 +2023,7 @@ const SKJEMA = {
     await api.loggInn(brukernavn, d.passord);
     await lastAlt();
     UI.melding = 'Velkommen! Kontoen din er klar.';
-    gaTil(S.profil && S.profil.role === 'forelder' ? 'meg' : 'uke');
+    gaTil(S.profil && S.profil.role === 'forelder' ? 'meg' : 'hjem');
   },
 
   async 'nytt-passord'(d) {
@@ -1696,7 +2035,7 @@ const SKJEMA = {
       await api.loggInn(svar.brukernavn, d.passord);
       await lastAlt();
       UI.melding = 'Passordet er byttet. Brukernavnet ditt er ' + svar.brukernavn + '.';
-      gaTil('uke');
+      gaTil('hjem');
     } else {
       UI.melding = 'Passordet er byttet. Logg inn med det nye passordet.';
       gaTil('');
@@ -1806,6 +2145,63 @@ const SKJEMA = {
       await lastSpiller();
       gaTil('meg');
     }
+  },
+
+  async 'oppforing'(d) {
+    if (!KAL_KATEGORI[d.kat]) throw new Error('Velg hva det gjelder.');
+    const dager = [1, 2, 3, 4, 5, 6, 7].filter((i) => d['dag' + i]);
+    const dato = tekstFelt(d.dato);
+    if (!dager.length && !dato) throw new Error('Velg hvilke dager det gjelder hver uke, eller én bestemt dag.');
+    if (dager.length && dato) throw new Error('Velg enten faste dager eller én bestemt dag, ikke begge.');
+    if (dato && !/^\d{4}-\d{2}-\d{2}$/.test(dato)) throw new Error('Datoen er ikke gyldig.');
+    const tidRe = /^\d{2}:\d{2}(:\d{2})?$/;
+    const fra = tekstFelt(d.fra);
+    if (!fra || !tidRe.test(fra)) throw new Error('Skriv når det starter.');
+    const til = tekstFelt(d.til);
+    if (til && !tidRe.test(til)) throw new Error('Sluttiden er ikke gyldig.');
+    const kropp = {
+      category: d.kat,
+      title: tekstFelt(d.navn),
+      weekdays: dager.length ? dager : null,
+      on_date: dager.length ? null : dato,
+      starts: fra.slice(0, 5),
+      ends: til ? til.slice(0, 5) : null,
+      note: tekstFelt(d.notat)
+    };
+    const tilbake = 'kalender?vis=min' + (dato ? '&uke=' + mandagFor(datoFraStr(dato)).toISOString().slice(0, 10) : '');
+    if (UI.visSom) {
+      if (d.id) {
+        S.kalender = S.kalender.map((o) => (o.id === d.id ? Object.assign({}, o, kropp) : o));
+      } else {
+        S.kalender = S.kalender.concat([Object.assign({ id: 'demo-kal-' + Date.now(), player_id: S.profil.player_id }, kropp)]);
+      }
+      UI.melding = 'Forhåndsvisning: kalenderen er ikke lagret.';
+      gaTil(tilbake);
+      return;
+    }
+    if (d.id) {
+      const rader = await api.rest('personal_entries?id=eq.' + encodeURIComponent(d.id) + '&select=id', { metode: 'PATCH', prefer: 'return=representation', kropp });
+      if (!rader || !rader.length) throw new Error('Kunne ikke endre dette. Last siden på nytt og prøv igjen.');
+    } else {
+      kropp.player_id = S.profil.player_id;
+      await api.rest('personal_entries', { metode: 'POST', prefer: 'return=minimal', kropp });
+    }
+    await lastSpiller();
+    UI.melding = 'Lagret i kalenderen.';
+    gaTil(tilbake);
+  },
+
+  async 'inspirasjon'(d) {
+    if (S.profil.role !== 'trener') return;
+    const url = tekstFelt(d.url);
+    if (!url || !/^https?:\/\/\S+$/i.test(url)) throw new Error('Lim inn en lenke som starter med https://');
+    if (url.length > 500) throw new Error('Lenken er for lang.');
+    const tittel = tekstFelt(d.tittel);
+    if (!tittel || tittel.length < 2) throw new Error('Skriv en kort tittel.');
+    await api.rest('inspiration', { metode: 'POST', prefer: 'return=minimal', kropp: { url, title: tittel, note: tekstFelt(d.notat) } });
+    S.inspirasjon = (await api.rest('inspiration?select=*&order=created_at.desc&limit=200')) || [];
+    UI.melding = 'Delt med laget.';
+    tegn();
   },
 
   async 'trenerkommentar'(d) {
@@ -2033,6 +2429,28 @@ async function vedKlikk(e) {
       UI.melding = 'Loggen er slettet.';
       gaTil('meg');
     });
+  } else if (h === 'slett-oppforing') {
+    if (!window.confirm('Slette dette fra kalenderen?')) return;
+    if (UI.visSom) {
+      S.kalender = S.kalender.filter((o) => o.id !== el.dataset.id);
+      UI.melding = 'Forhåndsvisning: ingenting er slettet.';
+      gaTil('kalender?vis=min');
+      return;
+    }
+    await utfor(async () => {
+      await api.rest('personal_entries?id=eq.' + encodeURIComponent(el.dataset.id), { metode: 'DELETE', prefer: 'return=minimal' });
+      await lastSpiller();
+      UI.melding = 'Slettet fra kalenderen.';
+      gaTil('kalender?vis=min');
+    });
+  } else if (h === 'slett-inspirasjon') {
+    if (!window.confirm('Slette dette fra Inspirasjon?')) return;
+    await utfor(async () => {
+      await api.rest('inspiration?id=eq.' + encodeURIComponent(el.dataset.id), { metode: 'DELETE', prefer: 'return=minimal' });
+      S.inspirasjon = (await api.rest('inspiration?select=*&order=created_at.desc&limit=200')) || [];
+      UI.melding = 'Slettet.';
+      tegn();
+    });
   } else if (h === 'slett-mal') {
     if (!window.confirm('Slette målet?')) return;
     const trener = S.profil.role === 'trener';
@@ -2068,6 +2486,11 @@ async function vedKlikk(e) {
 /* ---------- Tegning og oppstart ---------- */
 
 const SIDER = {
+  hjem: ['Hjem', visHjem],
+  mer: ['Mer', visMer],
+  egentrening: ['Egentrening', visEgentrening],
+  inspirasjon: ['Inspirasjon', visInspirasjon],
+  oppforing: ['Min kalender', visOppforing],
   uke: ['Denne uka', visUke],
   kalender: ['Kalender', visKalender],
   spillmodell: ['Spillmodell', visSpillmodell],
@@ -2081,7 +2504,10 @@ const SIDER = {
 };
 
 /* Hvem som kan åpne hvilke sider. Resten er for alle innloggede. */
-const SIDE_ROLLER = { logg: ['spiller'], mal: ['spiller', 'trener'], trener: ['trener'], okt: ['trener'], spiller: ['trener'] };
+const SIDE_ROLLER = {
+  logg: ['spiller'], oppforing: ['spiller'], mal: ['spiller', 'trener'],
+  trener: ['trener'], okt: ['trener'], spiller: ['trener']
+};
 
 function gjeldendeRute() {
   return location.hash.replace(/^#\/?/, '').split('?')[0];
@@ -2099,15 +2525,17 @@ function tegn() {
   } else if (!S.profil) {
     html = visUtenProfil();
   } else {
-    let navn = SIDER[rute] ? rute : 'uke';
-    if (SIDE_ROLLER[navn] && !SIDE_ROLLER[navn].includes(S.profil.role)) navn = 'uke';
+    let navn = SIDER[rute] ? rute : 'hjem';
+    if (SIDE_ROLLER[navn] && !SIDE_ROLLER[navn].includes(S.profil.role)) navn = 'hjem';
     html = ramme(navn, SIDER[navn][1]());
     tittel = SIDER[navn][0] + ' – Kolbotn G2011';
   }
   app.innerHTML = html;
   document.title = tittel;
-  if (location.hash !== UI.forrigeRute) {
-    UI.forrigeRute = location.hash;
+  /* Til toppen ved ny side, men ikke når man bare blar mellom uker. */
+  const sti = location.hash.replace(/[?&]uke=[^&]*/, '');
+  if (sti !== UI.forrigeRute) {
+    UI.forrigeRute = sti;
     window.scrollTo(0, 0);
   }
   UI.melding = '';
