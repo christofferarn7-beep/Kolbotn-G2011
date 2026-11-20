@@ -816,7 +816,7 @@ const FANE_FOR = {
 };
 
 function faneFor(aktiv) {
-  if (aktiv === 'mal' && S.profil.role === 'trener') return 'trener';
+  if ((aktiv === 'mal' || aktiv === 'oppforing') && S.profil.role === 'trener') return 'trener';
   return FANE_FOR[aktiv] || aktiv;
 }
 
@@ -1453,6 +1453,11 @@ function ukeNavigasjon(mandag, lenke) {
 }
 
 /* Ukeplan med lagets økter og spillerens egne oppføringer, dag for dag. */
+/* For spilleren: lagt inn av noen andre enn ham selv, altså en trener. Treneren kan endre alt. */
+function lagtInnAvTrener(o) {
+  return S.profil.role === 'spiller' && Boolean(o.created_by) && o.created_by !== S.profil.id;
+}
+
 function ukeplan(mandag, oppforinger, redigerbar) {
   const idag = idagStr();
   let html = '<div class="ukeplan">';
@@ -1467,13 +1472,14 @@ function ukeplan(mandag, oppforinger, redigerbar) {
     for (const o of oppforinger) {
       if (!((o.weekdays && o.weekdays.includes(i + 1)) || o.on_date === datoStr)) continue;
       const kat = KAL_KATEGORI[o.category] || KAL_KATEGORI.annet;
+      const fraTrener = lagtInnAvTrener(o);
       poster.push({
         sort: tidKort(o.starts),
         tid: tidKort(o.starts) + (o.ends ? '–' + tidKort(o.ends) : ''),
         navn: o.title || kat.navn,
-        under: [o.title ? kat.navn : '', o.note || ''].filter(Boolean).join(' · '),
+        under: [fraTrener ? 'Fra treneren' : '', o.title ? kat.navn : '', o.note || ''].filter(Boolean).join(' · '),
         klasse: kat.klasse,
-        id: o.id,
+        id: fraTrener ? null : o.id,
         fast: Boolean(o.weekdays)
       });
     }
@@ -1519,25 +1525,47 @@ function visMinKalender() {
     + ukeNavigasjon(mandag, '#/kalender?vis=min&uke=')
     + ukeplan(mandag, S.kalender, true);
   if (S.kalender.length) {
-    html += '<p class="dempet liten">Trykk på noe du har lagt inn for å endre det. ↻ betyr at det gjentas hver uke. Treneren ser kalenderen din, foreldre gjør det ikke.</p>';
+    html += '<p class="dempet liten">Trykk på noe du har lagt inn for å endre det. ↻ betyr at det gjentas hver uke. Det som er merket «Fra treneren», endrer treneren. Treneren ser kalenderen din, foreldre gjør det ikke.</p>';
   }
   return html;
 }
 
 function visOppforing() {
+  const trener = S.profil.role === 'trener';
+  const kilde = trener ? ((S.trener && S.trener.kalender) || []) : S.kalender;
   const id = ruteParam('id');
-  const o = id ? S.kalender.find((x) => x.id === id) : null;
-  let html = '<div class="overskrift"><p class="overlinje">Min kalender</p><h1>' + (o ? 'Endre' : 'Legg til') + '</h1></div>';
-  if (id && !o) return html + '<section class="kort tomt"><p>Fant ikke det du har lagt inn.</p></section><a class="knapp sekundar" href="#/kalender?vis=min">Tilbake</a>';
-  if (!harSamtykke(S.profil.player_id)) return html + utenSamtykkeKalender();
-  const v = o || { category: 'skole', weekdays: null, on_date: null, starts: '', ends: '', title: '', note: '' };
+  const o = id ? kilde.find((x) => x.id === id) : null;
+  const valgt = o ? [o.player_id] : (trener ? ruteParam('spiller').split(',').filter(Boolean) : []);
+  const tilbake = !trener ? '#/kalender?vis=min'
+    : (valgt.length === 1 ? '#/spiller?id=' + encodeURIComponent(valgt[0]) : '#/trener');
+  let html = '<div class="overskrift"><p class="overlinje">' + (trener ? 'Spillernes kalender' : 'Min kalender') + '</p>'
+    + '<h1>' + (o ? 'Endre' : 'Legg til') + '</h1>'
+    + (trener && o ? '<p class="dempet">' + esc(spillerNavn(o.player_id)) + '</p>' : '') + '</div>';
+  if (id && !o) {
+    return html + '<section class="kort tomt"><p>Fant ikke det som er lagt inn.</p></section><a class="knapp sekundar" href="' + esc(tilbake) + '">Tilbake</a>';
+  }
+  if (o && lagtInnAvTrener(o)) {
+    return html + '<section class="kort tomt"><p>Dette er lagt inn av treneren. Si fra til treneren hvis noe er feil.</p></section>'
+      + '<a class="knapp sekundar" href="' + esc(tilbake) + '">Tilbake</a>';
+  }
+  if (!trener && !harSamtykke(S.profil.player_id)) return html + utenSamtykkeKalender();
+  const v = o || { category: trener ? 'trening' : 'skole', weekdays: null, on_date: null, starts: '', ends: '', title: '', note: '' };
   const dager = v.weekdays || [];
   html += '<form class="skjema" data-skjema="oppforing" novalidate><input type="hidden" name="id" value="' + esc(v.id || '') + '">'
-    + '<section class="kort"><fieldset class="felt"><legend>Hva gjelder det?</legend><div class="valg-rad kategorier">'
+    + '<input type="hidden" name="spiller" value="' + esc(o ? o.player_id : '') + '">';
+  if (trener && !o) {
+    const spillere = S.trener.spillere.filter((x) => x.active).sort((a, b) => a.full_name.localeCompare(b.full_name, 'nb'));
+    html += '<section class="kort"><fieldset class="felt"><legend>Hvem gjelder det?</legend><div class="spillervalg">'
+      + spillere.map((x) => '<label class="sjekkrad"><input type="checkbox" name="sp-' + esc(x.id) + '" value="1"'
+        + (valgt.includes(x.id) ? ' checked' : '') + '><span>' + esc(x.full_name) + '</span></label>').join('')
+      + '</div></fieldset><p class="dempet liten">Det du legger inn, vises som «Fra treneren» i Min kalender til spillerne du velger. De kan ikke endre det selv.</p></section>';
+  }
+  html += '<section class="kort"><fieldset class="felt"><legend>Hva gjelder det?</legend><div class="valg-rad kategorier">'
     + Object.entries(KAL_KATEGORI).map(([k, kat]) => '<label class="valg"><input type="radio" name="kat" value="' + k + '"'
       + (v.category === k ? ' checked' : '') + '><span>' + esc(kat.navn) + '</span></label>').join('')
     + '</div></fieldset>'
-    + '<div class="felt"><label for="onavn">Navn (valgfritt)</label><input id="onavn" name="navn" maxlength="60" autocomplete="off" placeholder="F.eks. Hospitering med G16" value="' + esc(v.title || '') + '"></div>'
+    + '<div class="felt"><label for="onavn">Navn (valgfritt)</label><input id="onavn" name="navn" maxlength="60" autocomplete="off" placeholder="'
+    + (trener ? 'F.eks. JR1-trening' : 'F.eks. Hospitering med G16') + '" value="' + esc(v.title || '') + '"></div>'
     + '</section><section class="kort">'
     + '<fieldset class="felt"><legend>Hver uke</legend><div class="valg-rad ukedager">'
     + UKEDAG_KORT.map((d, i) => '<label class="valg"><input type="checkbox" name="dag' + (i + 1) + '" value="1"'
@@ -1546,11 +1574,11 @@ function visOppforing() {
     + '<div class="felt"><label for="odato">Eller én bestemt dag</label><input id="odato" name="dato" type="date" value="' + esc(v.on_date || '') + '"></div>'
     + '<div class="to-kol"><div class="felt"><label for="ofra">Fra</label><input id="ofra" name="fra" type="time" value="' + esc(tidInput(v.starts)) + '"></div>'
     + '<div class="felt"><label for="otil">Til (valgfritt)</label><input id="otil" name="til" type="time" value="' + esc(tidInput(v.ends)) + '"></div></div>'
-    + '<p class="dempet liten">Søvn: «Fra» er når du legger deg, og «Til» er når du står opp.</p>'
+    + (trener ? '' : '<p class="dempet liten">Søvn: «Fra» er når du legger deg, og «Til» er når du står opp.</p>')
     + '<div class="felt"><label for="onotat">Notat (valgfritt)</label><input id="onotat" name="notat" maxlength="200" autocomplete="off" value="' + esc(v.note || '') + '"></div>'
     + '</section>' + skjemafeil() + '<button class="knapp" type="submit">Lagre</button></form>';
   if (o) html += '<button type="button" class="lenkeknapp" data-handling="slett-oppforing" data-id="' + esc(o.id) + '">Slett fra kalenderen</button>';
-  return html + '<a class="lenkeknapp" href="#/kalender?vis=min">Avbryt</a>';
+  return html + '<a class="lenkeknapp" href="' + esc(tilbake) + '">Avbryt</a>';
 }
 
 /* ---------- Logg etter økt ---------- */
@@ -1800,8 +1828,9 @@ function visSpiller() {
   const mandag = ukeFraParam();
   html += '<section class="uke"><h2>Ukeplan</h2>'
     + (kal.length ? '' : '<p class="dempet liten">' + esc(s.full_name.split(' ')[0]) + ' har ikke lagt inn noe i Min kalender ennå.</p>')
+    + '<a class="knapp sekundar liten-knapp" href="#/oppforing?spiller=' + esc(encodeURIComponent(s.id)) + '">Legg til i kalenderen</a>'
     + ukeNavigasjon(mandag, '#/spiller?id=' + encodeURIComponent(s.id) + '&uke=')
-    + ukeplan(mandag, kal, false) + '</section>';
+    + ukeplan(mandag, kal, true) + '</section>';
 
   if (sone && sone.sist_malt) {
     html += '<section class="kort"><p class="overlinje">Høyde</p><p><strong>' + esc(cm(sone.hoyde_cm)) + ' cm</strong> · målt ' + esc(datoUtenAar(sone.sist_malt)) + '</p>'
@@ -1893,26 +1922,25 @@ function visTrener() {
     : '<section class="kort tomt"><p class="dempet">Etter første økt ser du loggene til spillerne her: belastning, smerter og tilbakemeldinger.</p></section>';
   html += '</section>';
 
-  /* Kroppsøving, annen trening og kamper spillerne har lagt inn for i dag */
+  /* Kroppsøving, annen trening og kamper i spillernes kalender i dag */
   const kalender = t.kalender || [];
-  if (kalender.length) {
-    const idag = idagStr();
-    const idagNr = datoFraStr(idag).getUTCDay() || 7;
-    const iDag = kalender
-      .filter((o) => BELASTNING_KAT.includes(o.category) && ((o.weekdays && o.weekdays.includes(idagNr)) || o.on_date === idag))
-      .sort((a, b) => tidKort(a.starts).localeCompare(tidKort(b.starts)));
-    html += '<section class="uke"><h2>Annen belastning i dag</h2>';
-    html += iDag.length
-      ? '<div class="liste">' + iDag.map((o) => {
-        const kat = KAL_KATEGORI[o.category];
-        return '<a class="rad lenkerad" href="#/spiller?id=' + esc(encodeURIComponent(o.player_id)) + '"><div class="rad-tekst">'
-          + '<span class="navn">' + esc(spillerNavn(o.player_id)) + '</span>'
-          + '<span class="under">' + esc(kat.navn + (o.title ? ': ' + o.title : '') + ' · ' + tidKort(o.starts) + (o.ends ? '–' + tidKort(o.ends) : '')) + '</span>'
-          + '</div><span class="pil" aria-hidden="true">›</span></a>';
-      }).join('') + '</div>'
-      : '<section class="kort tomt"><p class="dempet">Ingen har lagt inn kroppsøving, annen trening eller kamp i dag.</p></section>';
-    html += '</section>';
-  }
+  const idag = idagStr();
+  const idagNr = datoFraStr(idag).getUTCDay() || 7;
+  const iDag = kalender
+    .filter((o) => BELASTNING_KAT.includes(o.category) && ((o.weekdays && o.weekdays.includes(idagNr)) || o.on_date === idag))
+    .sort((a, b) => tidKort(a.starts).localeCompare(tidKort(b.starts)));
+  html += '<section class="uke"><h2>Annen belastning i dag</h2>'
+    + '<a class="knapp sekundar liten-knapp" href="#/oppforing">Legg inn trening for spillere</a>';
+  html += iDag.length
+    ? '<div class="liste">' + iDag.map((o) => {
+      const kat = KAL_KATEGORI[o.category];
+      return '<a class="rad lenkerad" href="#/spiller?id=' + esc(encodeURIComponent(o.player_id)) + '"><div class="rad-tekst">'
+        + '<span class="navn">' + esc(spillerNavn(o.player_id)) + '</span>'
+        + '<span class="under">' + esc(kat.navn + (o.title ? ': ' + o.title : '') + ' · ' + tidKort(o.starts) + (o.ends ? '–' + tidKort(o.ends) : '')) + '</span>'
+        + '</div><span class="pil" aria-hidden="true">›</span></a>';
+    }).join('') + '</div>'
+    : '<section class="kort tomt"><p class="dempet">Ingen har kroppsøving, annen trening eller kamp i kalenderen i dag.</p></section>';
+  html += '</section>';
 
   const soner = new Map(t.soner.map((s) => [s.player_id, s]));
   html += '<section class="uke"><h2>Spillere</h2><p class="dempet liten">Trykk på en spiller for mål, ukeplan, logger og belastning.</p><div class="liste">'
@@ -2015,7 +2043,7 @@ function demoKalender() {
   return [
     Object.assign({}, felles, { id: 'demo-kal-1', category: 'skole', weekdays: [1, 2, 3, 4, 5], starts: '08:30:00', ends: '15:00:00' }),
     Object.assign({}, felles, { id: 'demo-kal-2', category: 'kroppsoving', weekdays: [2], starts: '10:00:00', ends: '11:30:00' }),
-    Object.assign({}, felles, { id: 'demo-kal-3', category: 'trening', title: 'Hospitering med G16', weekdays: [4], starts: '18:00:00', ends: '19:30:00' }),
+    Object.assign({}, felles, { id: 'demo-kal-3', category: 'trening', title: 'JR1-trening', weekdays: [4], starts: '18:00:00', ends: '19:30:00', created_by: 'demo-trener' }),
     Object.assign({}, felles, { id: 'demo-kal-4', category: 'mat', title: 'Middag', weekdays: [1, 2, 3, 4, 5], starts: '15:30:00' }),
     Object.assign({}, felles, { id: 'demo-kal-5', category: 'sovn', title: 'Legger meg', weekdays: [1, 2, 3, 4, 5, 6, 7], starts: '22:30:00', ends: '07:00:00' })
   ];
@@ -2224,6 +2252,8 @@ const SKJEMA = {
   },
 
   async 'oppforing'(d) {
+    const valgte = Object.keys(d).filter((k) => k.startsWith('sp-') && d[k]).map((k) => k.slice(3));
+    if (S.profil.role === 'trener' && !d.id && !valgte.length) throw new Error('Velg minst én spiller.');
     if (!KAL_KATEGORI[d.kat]) throw new Error('Velg hva det gjelder.');
     const dager = [1, 2, 3, 4, 5, 6, 7].filter((i) => d['dag' + i]);
     const dato = tekstFelt(d.dato);
@@ -2244,7 +2274,30 @@ const SKJEMA = {
       ends: til ? til.slice(0, 5) : null,
       note: tekstFelt(d.notat)
     };
-    const tilbake = 'kalender?vis=min' + (dato ? '&uke=' + mandagFor(datoFraStr(dato)).toISOString().slice(0, 10) : '');
+    const ukeParam = dato ? '&uke=' + mandagFor(datoFraStr(dato)).toISOString().slice(0, 10) : '';
+    if (S.profil.role === 'trener') {
+      if (d.id) {
+        const rader = await api.rest('personal_entries?id=eq.' + encodeURIComponent(d.id) + '&select=id', { metode: 'PATCH', prefer: 'return=representation', kropp });
+        if (!rader || !rader.length) throw new Error('Kunne ikke endre dette. Last siden på nytt og prøv igjen.');
+        await lastTrener();
+        UI.melding = 'Lagret i kalenderen til ' + spillerNavn(d.spiller) + '.';
+        gaTil('spiller?id=' + encodeURIComponent(d.spiller) + ukeParam);
+        return;
+      }
+      const spillere = valgte;
+      await api.rest('personal_entries', {
+        metode: 'POST',
+        prefer: 'return=minimal',
+        kropp: spillere.map((pid) => Object.assign({ player_id: pid }, kropp))
+      });
+      await lastTrener();
+      UI.melding = spillere.length === 1
+        ? 'Lagt inn i kalenderen til ' + spillerNavn(spillere[0]) + '.'
+        : 'Lagt inn i kalenderen til ' + spillere.length + ' spillere.';
+      gaTil(spillere.length === 1 ? 'spiller?id=' + encodeURIComponent(spillere[0]) + ukeParam : 'trener');
+      return;
+    }
+    const tilbake = 'kalender?vis=min' + ukeParam;
     if (UI.visSom) {
       if (d.id) {
         S.kalender = S.kalender.map((o) => (o.id === d.id ? Object.assign({}, o, kropp) : o));
@@ -2522,10 +2575,17 @@ async function vedKlikk(e) {
       return;
     }
     await utfor(async () => {
+      const trener = S.profil.role === 'trener';
+      const o = trener && S.trener.kalender.find((x) => x.id === el.dataset.id);
       await api.rest('personal_entries?id=eq.' + encodeURIComponent(el.dataset.id), { metode: 'DELETE', prefer: 'return=minimal' });
-      await lastSpiller();
       UI.melding = 'Slettet fra kalenderen.';
-      gaTil('kalender?vis=min');
+      if (trener) {
+        await lastTrener();
+        gaTil(o ? 'spiller?id=' + encodeURIComponent(o.player_id) : 'trener');
+      } else {
+        await lastSpiller();
+        gaTil('kalender?vis=min');
+      }
     });
   } else if (h === 'slett-inspirasjon') {
     if (!window.confirm('Slette dette fra Inspirasjon?')) return;
@@ -2589,7 +2649,7 @@ const SIDER = {
 
 /* Hvem som kan åpne hvilke sider. Resten er for alle innloggede. */
 const SIDE_ROLLER = {
-  logg: ['spiller'], oppforing: ['spiller'], mal: ['spiller', 'trener'],
+  logg: ['spiller'], oppforing: ['spiller', 'trener'], mal: ['spiller', 'trener'],
   trener: ['trener'], okt: ['trener'], spiller: ['trener']
 };
 
