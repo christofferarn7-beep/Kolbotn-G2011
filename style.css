@@ -874,7 +874,52 @@ a.lenkerad:hover { background: #F7FAFC; color: inherit; }
 .valg-rad.ukedager { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
 .valg-rad.ukedager .valg span { min-height: 44px; padding: 0; font-size: 13px; }
 
+/* Trenerne: knapper for kalenderen og skjema for økter */
+.verktoy { gap: 10px; }
+.verktoy .knapp.liten-knapp { width: 100%; text-align: center; }
+.verktoy p { margin: 0; }
+.tre-kol { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.tre-kol .felt input { padding-left: 8px; padding-right: 8px; }
+.detaljer .lenkeknapp.endre { align-self: flex-start; padding-left: 0; }
+
+/* Ny versjon av siden */
+.oppdatering {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  z-index: 6;
+  max-width: 576px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 10px 10px 16px;
+  border-radius: 14px;
+  background: var(--marine);
+  color: var(--hvit);
+  box-shadow: 0 6px 20px rgba(11, 42, 69, 0.28);
+  font-size: 14px;
+  line-height: 1.35;
+}
+.oppdatering p { margin: 0; }
+.oppdatering strong { display: block; font-size: 15px; }
+.oppdatering button {
+  flex: none;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--hvit);
+  color: var(--marine);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
 @media (min-width: 700px) {
   .innhold { padding-top: 28px; }
   .periodekort img { height: 180px; }
 }
+.tre-kol input[type="time"]::-webkit-calendar-picker-indicator { display: none; }

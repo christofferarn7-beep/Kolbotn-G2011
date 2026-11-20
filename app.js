@@ -63,6 +63,15 @@ const UKEDAG_KORT = ['Man', 'Tir', 'Ons', 'Tor', 'Fre', 'Lør', 'Søn'];
 /* Egentrening */
 const PROGRAM_GRUPPER = [['ball', 'Med ball'], ['sprint', 'Sprint'], ['styrke', 'Styrke'], ['annet', 'Annet']];
 
+/* Lagets kalender: typer og status slik databasen tillater dem, og det en ny økt starter med. */
+const HENDELSE_TYPE = { trening: 'Trening', kamp: 'Kamp', cup: 'Cup', fysisk: 'Fysisk', 'møte': 'Møte', fri: 'Fri', annet: 'Annet' };
+const HENDELSE_STATUS = { bekreftet: 'Bekreftet', planlagt: 'Planlagt', avlyst: 'Avlyst' };
+const STANDARD_TITTEL = { trening: 'Fellestrening', kamp: 'Kamp', cup: 'Cup', fysisk: 'Fysisk trening', 'møte': 'Møte', fri: 'Fri', annet: 'Aktivitet' };
+const NY_OKT = { oppmote: '16:30', start: '16:45', slutt: '18:00', sted: 'Sofiemyr kunstgress' };
+const MAKS_UKER = 26;
+const DATO_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TID_RE = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
+
 const IKON = {
   hus: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>',
   kalender: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
@@ -278,6 +287,42 @@ function tidTekst(h) {
   return h.ends_at ? klokke(h.starts_at) + '–' + klokke(h.ends_at) : klokke(h.starts_at);
 }
 
+/* Dato og klokkeslett i norsk tid («2026-11-24», «16:45») til et tidspunkt, med sommer- og vintertid. */
+function osloTidspunkt(datoStr, tid) {
+  const [aar, mnd, dag] = datoStr.split('-').map(Number);
+  const [time, min] = tid.split(':').map(Number);
+  const onsket = Date.UTC(aar, mnd - 1, dag, time, min);
+  let tidspunkt = onsket;
+  for (let i = 0; i < 2; i++) {
+    const o = osloDeler(new Date(tidspunkt));
+    tidspunkt += onsket - Date.UTC(o.aar, o.mnd - 1, o.dag, Number(o.time), Number(o.min));
+  }
+  return new Date(tidspunkt);
+}
+
+/* Samme ukedag hver uke fra og med én dato til og med en annen. Stopper like over taket. */
+function ukentligeDatoer(fra, til) {
+  const datoer = [];
+  for (let d = datoFraStr(fra); datoer.length <= MAKS_UKER; d = new Date(d.getTime() + 7 * DAG_MS)) {
+    const s = d.toISOString().slice(0, 10);
+    if (s > til) break;
+    datoer.push(s);
+  }
+  return datoer;
+}
+
+/* Klokkeslett fra et skjema som «16:45», tomt som null. Ugyldig gir feilmeldingen. */
+function tidVerdi(verdi, feilmelding) {
+  const t = String(verdi == null ? '' : verdi).trim();
+  if (!t) return null;
+  if (!TID_RE.test(t)) throw new Error(feilmelding);
+  return t.slice(0, 5);
+}
+
+function inputTid(tidspunkt) {
+  return tidspunkt ? klokke(tidspunkt).replace('.', ':') : '';
+}
+
 function datoTekst(s) {
   const d = datoFraStr(s);
   return d.getUTCDate() + '. ' + MND[d.getUTCMonth()] + ' ' + d.getUTCFullYear();
@@ -329,6 +374,20 @@ function periodeFor(perioder, datoStr) {
   return perioder.find((p) => p.start_date <= datoStr && datoStr <= p.end_date)
     || perioder.find((p) => p.start_date > datoStr)
     || null;
+}
+
+/* Perioden en ny økt hører til. Mellom to perioder, som i jula, havner den i perioden før. */
+function periodeIdFor(perioder, datoStr) {
+  const inni = perioder.find((p) => p.start_date <= datoStr && datoStr <= p.end_date);
+  if (inni) return inni.id;
+  const tidligere = perioder.filter((p) => p.end_date < datoStr);
+  const p = tidligere.length ? tidligere[tidligere.length - 1] : perioder.find((x) => x.start_date > datoStr);
+  return p ? p.id : null;
+}
+
+function standardTittel(type, motstander) {
+  if (type === 'kamp' && motstander) return 'Kamp mot ' + motstander;
+  return STANDARD_TITTEL[type] || 'Aktivitet';
 }
 
 function sluttTid(h) {
@@ -733,6 +792,11 @@ function harSamtykke(spillerId) {
   return S.samtykker.some((c) => c.player_id === spillerId && !c.withdrawn_at);
 }
 
+/* Ekte trener. I forhåndsvisningen er profilen byttet ut, så trenerknappene forsvinner der. */
+function erTrener() {
+  return Boolean(S.profil) && S.profil.role === 'trener';
+}
+
 /* ---------- Visninger: innlogging ---------- */
 
 function skjemafeil() {
@@ -812,11 +876,12 @@ function visLastFeil() {
 /* Undersider markerer fanen de hører til. */
 const FANE_FOR = {
   plan: 'mer', spillmodell: 'mer', egentrening: 'mer', inspirasjon: 'hjem',
-  logg: 'meg', mal: 'meg', okt: 'trener', spiller: 'trener', oppforing: 'kalender'
+  logg: 'meg', mal: 'meg', okt: 'trener', spiller: 'trener', oppforing: 'kalender', hendelse: 'kalender'
 };
 
 function faneFor(aktiv) {
-  if ((aktiv === 'mal' || aktiv === 'oppforing') && S.profil.role === 'trener') return 'trener';
+  if (aktiv === 'oppforing' && S.profil.role === 'trener') return ruteParam('fra') === 'kalender' ? 'kalender' : 'trener';
+  if (aktiv === 'mal' && S.profil.role === 'trener') return 'trener';
   return FANE_FOR[aktiv] || aktiv;
 }
 
@@ -900,6 +965,7 @@ function visUke() {
       + '<p class="tid-stor">' + esc(tidTekst(neste)) + '</p>'
       + '<p>' + esc(neste.title) + '</p>'
       + (fakta.length ? '<div class="fakta">' + fakta.join('') + '</div>' : '')
+      + (erTrener() ? endreLenke(neste) : '')
       + '</section>';
   } else {
     html += '<section class="kort tomt"><p><strong>Ingen aktiviteter lagt inn</strong></p><p class="dempet liten">Treninger og kamper kommer her når tidene er klare.</p></section>';
@@ -928,8 +994,13 @@ function hendelseRad(h) {
     + '<span class="under">' + esc(tidTekst(h)) + (h.location ? ' · ' + esc(h.location) : '') + '</span></div>'
     + merkelapp(h);
   const fakta = hendelseFakta(h);
+  if (erTrener()) fakta.push(endreLenke(h));
   if (!fakta.length) return '<div class="rad">' + topp + '</div>';
   return '<details><summary class="rad">' + topp + '</summary><div class="detaljer">' + fakta.join('') + '</div></details>';
+}
+
+function endreLenke(h) {
+  return '<a class="lenkeknapp endre" href="#/hendelse?id=' + esc(encodeURIComponent(h.id)) + '">Endre, avlys eller slett</a>';
 }
 
 function loggFor(eventId) {
@@ -970,7 +1041,8 @@ function visKalender() {
     return '<div class="overskrift"><h1>Kalender</h1><p class="dempet">Din uke: lagets økter og det du har lagt inn selv</p></div>'
       + kalenderValg() + visMinKalender();
   }
-  let html = '<div class="overskrift"><h1>Kalender</h1><p class="dempet">Treninger, kamper og periodene i årshjulet</p></div>' + kalenderValg();
+  let html = '<div class="overskrift"><h1>Kalender</h1><p class="dempet">Treninger, kamper og periodene i årshjulet</p></div>'
+    + kalenderValg() + kalenderVerktoy(false);
   if (!S.perioder.length) return html + '<section class="kort tomt"><p>Ingen perioder lagt inn ennå.</p></section>';
   const standard = periodeFor(S.perioder, idagStr()) || S.perioder[S.perioder.length - 1];
   const valgt = S.perioder.find((p) => p.id === UI.periode) || standard;
@@ -993,7 +1065,8 @@ function visKalender() {
     return h.period_id === valgt.id || (dag >= valgt.start_date && dag <= valgt.end_date);
   });
   if (!hendelser.length) {
-    return html + '<section class="kort tomt"><p><strong>Ingen aktiviteter lagt inn ennå</strong></p><p class="dempet liten">Treninger og kamper kommer her når tidene er klare.</p></section>';
+    return html + '<section class="kort tomt"><p><strong>Ingen aktiviteter lagt inn ennå</strong></p><p class="dempet liten">'
+      + (erTrener() ? 'Trykk «Ny økt for laget» øverst for å legge inn.' : 'Treninger og kamper kommer her når tidene er klare.') + '</p></section>';
   }
   const uker = new Map();
   for (const h of hendelser) {
@@ -1500,6 +1573,16 @@ function ukeplan(mandag, oppforinger, redigerbar) {
   return html + '</div>';
 }
 
+/* Trenernes knapper for kalenderen, øverst på Kalender og på trenersiden. */
+function kalenderVerktoy(medTittel) {
+  if (!erTrener()) return '';
+  return '<section class="kort verktoy">' + (medTittel ? '<h2>Kalender</h2>' : '')
+    + '<a class="knapp liten-knapp" href="#/hendelse">+ Ny økt for laget</a>'
+    + '<a class="knapp sekundar liten-knapp" href="#/oppforing' + (medTittel ? '' : '?fra=kalender') + '">For enkeltspillere</a>'
+    + '<p class="dempet liten">Ny økt vises for alle spillerne. «Enkeltspillere» er for det som bare gjelder noen, som JR1-trening, og havner i Min kalender til dem du velger. '
+    + (medTittel ? 'Under Kalender kan du trykke på en økt for å endre, avlyse eller slette den.' : 'Trykk på en økt i lista for å endre, avlyse eller slette den.') + '</p></section>';
+}
+
 function kalenderValg() {
   if (S.profil.role !== 'spiller') return '';
   const min = ruteParam('vis') === 'min';
@@ -1536,8 +1619,9 @@ function visOppforing() {
   const id = ruteParam('id');
   const o = id ? kilde.find((x) => x.id === id) : null;
   const valgt = o ? [o.player_id] : (trener ? ruteParam('spiller').split(',').filter(Boolean) : []);
+  const fraKalender = trener && ruteParam('fra') === 'kalender';
   const tilbake = !trener ? '#/kalender?vis=min'
-    : (valgt.length === 1 ? '#/spiller?id=' + encodeURIComponent(valgt[0]) : '#/trener');
+    : (valgt.length === 1 ? '#/spiller?id=' + encodeURIComponent(valgt[0]) : (fraKalender ? '#/kalender' : '#/trener'));
   let html = '<div class="overskrift"><p class="overlinje">' + (trener ? 'Spillernes kalender' : 'Min kalender') + '</p>'
     + '<h1>' + (o ? 'Endre' : 'Legg til') + '</h1>'
     + (trener && o ? '<p class="dempet">' + esc(spillerNavn(o.player_id)) + '</p>' : '') + '</div>';
@@ -1552,7 +1636,8 @@ function visOppforing() {
   const v = o || { category: trener ? 'trening' : 'skole', weekdays: null, on_date: null, starts: '', ends: '', title: '', note: '' };
   const dager = v.weekdays || [];
   html += '<form class="skjema" data-skjema="oppforing" novalidate><input type="hidden" name="id" value="' + esc(v.id || '') + '">'
-    + '<input type="hidden" name="spiller" value="' + esc(o ? o.player_id : '') + '">';
+    + '<input type="hidden" name="spiller" value="' + esc(o ? o.player_id : '') + '">'
+    + (fraKalender ? '<input type="hidden" name="fra" value="kalender">' : '');
   if (trener && !o) {
     const spillere = S.trener.spillere.filter((x) => x.active).sort((a, b) => a.full_name.localeCompare(b.full_name, 'nb'));
     html += '<section class="kort"><fieldset class="felt"><legend>Hvem gjelder det?</legend><div class="spillervalg">'
@@ -1579,6 +1664,71 @@ function visOppforing() {
     + '</section>' + skjemafeil() + '<button class="knapp" type="submit">Lagre</button></form>';
   if (o) html += '<button type="button" class="lenkeknapp" data-handling="slett-oppforing" data-id="' + esc(o.id) + '">Slett fra kalenderen</button>';
   return html + '<a class="lenkeknapp" href="' + esc(tilbake) + '">Avbryt</a>';
+}
+
+/* ---------- Lagets kalender: ny økt og endre økt (trenere) ---------- */
+
+function hendelseVerdier(h) {
+  if (!h) {
+    const dato = ruteParam('dato');
+    return {
+      type: 'trening', navn: '', dato: DATO_RE.test(dato) ? dato : '',
+      oppmote: NY_OKT.oppmote, start: NY_OKT.start, slutt: NY_OKT.slutt, sted: NY_OKT.sted,
+      motstander: '', tema: '', hvorfor: '', opplegg: '', status: 'bekreftet'
+    };
+  }
+  return {
+    type: h.kind, navn: h.title || '', dato: osloDatoStr(new Date(h.starts_at)),
+    oppmote: inputTid(h.meet_at), start: inputTid(h.starts_at), slutt: inputTid(h.ends_at), sted: h.location || '',
+    motstander: h.opponent || '', tema: h.theme || '', hvorfor: h.why || '', opplegg: h.details || '', status: h.status || 'bekreftet'
+  };
+}
+
+function valgknapper(navn, valg, valgt) {
+  return Object.entries(valg).map(([k, tekst]) => '<label class="valg"><input type="radio" name="' + navn + '" value="' + esc(k) + '"'
+    + (k === valgt ? ' checked' : '') + '><span>' + esc(tekst) + '</span></label>').join('');
+}
+
+function visHendelse() {
+  const id = ruteParam('id');
+  const h = id ? S.hendelser.find((x) => x.id === id) : null;
+  let html = '<div class="overskrift"><p class="overlinje">Lagets kalender</p><h1>' + (id ? 'Endre økt' : 'Ny økt') + '</h1>'
+    + (h ? '<p class="dempet">' + esc(dagInfo(h.starts_at).lang + ' · ' + tidTekst(h) + ' · ' + h.title) + '</p>'
+      : (id ? '' : '<p class="dempet">Vises med en gang for alle spillerne under Kalender og Denne uka.</p>')) + '</div>';
+  if (id && !h) {
+    return html + '<section class="kort tomt"><p>Fant ikke økta. Den kan være slettet.</p></section>'
+      + '<a class="knapp sekundar" href="#/kalender">Tilbake til kalenderen</a>';
+  }
+  const v = hendelseVerdier(h);
+  html += '<form class="skjema" data-skjema="hendelse" novalidate><input type="hidden" name="id" value="' + esc(h ? h.id : '') + '">'
+    + '<section class="kort"><fieldset class="felt"><legend>Hva slags</legend><div class="valg-rad">' + valgknapper('type', HENDELSE_TYPE, v.type) + '</div></fieldset>'
+    + '<div class="felt"><label for="hnavn">Navn (valgfritt)</label><input id="hnavn" name="navn" maxlength="80" autocomplete="off" placeholder="Fellestrening" value="' + esc(v.navn) + '">'
+    + '<p class="hjelp">Tomt blir «Fellestrening», «Kamp mot …» og så videre.</p></div>'
+    + '<div class="felt"><label for="hmot">Motstander (kamp)</label><input id="hmot" name="motstander" maxlength="80" autocomplete="off" value="' + esc(v.motstander) + '"></div></section>'
+    + '<section class="kort"><div class="felt"><label for="hdato">Dato</label><input id="hdato" name="dato" type="date" required value="' + esc(v.dato) + '"></div>'
+    + '<div class="tre-kol">'
+    + '<div class="felt"><label for="hoppmote">Oppmøte</label><input id="hoppmote" name="oppmote" type="time" value="' + esc(v.oppmote) + '"></div>'
+    + '<div class="felt"><label for="hstart">Start</label><input id="hstart" name="start" type="time" required value="' + esc(v.start) + '"></div>'
+    + '<div class="felt"><label for="hslutt">Slutt</label><input id="hslutt" name="slutt" type="time" value="' + esc(v.slutt) + '"></div></div>'
+    + '<div class="felt"><label for="hsted">Sted</label><input id="hsted" name="sted" maxlength="80" autocomplete="off" value="' + esc(v.sted) + '"></div>'
+    + (h ? '' : '<div class="felt"><label for="hgjenta">Gjenta hver uke til og med (valgfritt)</label><input id="hgjenta" name="gjenta" type="date">'
+      + '<p class="hjelp">Samme ukedag og tid hver uke, maks ' + MAKS_UKER + ' uker. Hver økt kan endres for seg etterpå.</p></div>')
+    + '</section>'
+    + '<section class="kort"><div class="felt"><label for="htema">Tema (valgfritt)</label><input id="htema" name="tema" maxlength="120" autocomplete="off" placeholder="F.eks. Vende opp mellom linjene" value="' + esc(v.tema) + '"></div>'
+    + '<div class="felt"><label for="hhvorfor">Hvorfor (valgfritt)</label><input id="hhvorfor" name="hvorfor" maxlength="200" autocomplete="off" value="' + esc(v.hvorfor) + '"></div>'
+    + '<div class="felt"><label for="hopplegg">Opplegg (valgfritt)</label><textarea id="hopplegg" name="opplegg" maxlength="4000" placeholder="F.eks. dobbelrondo, possession og småbanespill">' + esc(v.opplegg) + '</textarea>'
+    + '<p class="hjelp">Spillerne ser tema, hvorfor og opplegg når de trykker på økta.</p></div></section>'
+    + '<section class="kort"><fieldset class="felt"><legend>Status</legend><div class="valg-rad">' + valgknapper('status', HENDELSE_STATUS, v.status) + '</div></fieldset>'
+    + '<p class="dempet liten">Planlagt betyr at den ikke er bekreftet ennå. Avlyst blir stående med strek over, og den kan ikke logges.</p></section>'
+    + skjemafeil() + '<button class="knapp" type="submit">' + (h ? 'Lagre endringer' : 'Legg inn') + '</button></form>';
+  if (h) {
+    const logget = S.trener ? S.trener.logger.filter((l) => l.event_id === h.id).length : 0;
+    html += logget
+      ? '<p class="dempet liten">' + logget + (logget === 1 ? ' spiller har' : ' spillere har') + ' logget denne økta, så den kan ikke slettes. Velg «Avlyst» hvis den ikke blir noe av.</p>'
+        + '<a class="lenkeknapp" href="#/okt?id=' + esc(encodeURIComponent(h.id)) + '">Se loggene</a>'
+      : '<button type="button" class="lenkeknapp" data-handling="slett-hendelse" data-id="' + esc(h.id) + '">Slett økta</button>';
+  }
+  return html + '<a class="lenkeknapp" href="#/kalender">Avbryt</a>';
 }
 
 /* ---------- Logg etter økt ---------- */
@@ -1871,6 +2021,8 @@ function visTrener() {
       + '<button type="button" class="knapp" data-handling="kopier" data-kilde="kodetekst">Kopier meldingen</button>'
       + '<button type="button" class="lenkeknapp" data-handling="lukk-kode">Ferdig</button></section>';
   }
+
+  html += kalenderVerktoy(true);
 
   html += '<section class="kort"><h2>Se siden som spiller eller forelder</h2>'
     + '<p class="dempet liten">Du ser nøyaktig det de ser, med en oppdiktet spiller. Det du gjør der, blir ikke lagret.</p>'
@@ -2294,7 +2446,7 @@ const SKJEMA = {
       UI.melding = spillere.length === 1
         ? 'Lagt inn i kalenderen til ' + spillerNavn(spillere[0]) + '.'
         : 'Lagt inn i kalenderen til ' + spillere.length + ' spillere.';
-      gaTil(spillere.length === 1 ? 'spiller?id=' + encodeURIComponent(spillere[0]) + ukeParam : 'trener');
+      gaTil(spillere.length === 1 ? 'spiller?id=' + encodeURIComponent(spillere[0]) + ukeParam : (d.fra === 'kalender' ? 'kalender' : 'trener'));
       return;
     }
     const tilbake = 'kalender?vis=min' + ukeParam;
@@ -2318,6 +2470,57 @@ const SKJEMA = {
     await lastSpiller();
     UI.melding = 'Lagret i kalenderen.';
     gaTil(tilbake);
+  },
+
+  async 'hendelse'(d) {
+    if (!erTrener()) return;
+    const type = HENDELSE_TYPE[d.type] ? d.type : '';
+    if (!type) throw new Error('Velg hva slags aktivitet det er.');
+    const dato = tekstFelt(d.dato);
+    if (!dato || !DATO_RE.test(dato)) throw new Error('Velg dato.');
+    const start = tidVerdi(d.start, 'Starttiden er ikke gyldig.');
+    if (!start) throw new Error('Skriv når den starter.');
+    const slutt = tidVerdi(d.slutt, 'Sluttiden er ikke gyldig.');
+    const oppmote = tidVerdi(d.oppmote, 'Oppmøtetiden er ikke gyldig.');
+    if (slutt && slutt <= start) throw new Error('Slutt må være etter start.');
+    if (oppmote && oppmote > start) throw new Error('Oppmøte kan ikke være etter start.');
+    let datoer = [dato];
+    const gjenta = d.id ? null : tekstFelt(d.gjenta);
+    if (gjenta) {
+      if (!DATO_RE.test(gjenta)) throw new Error('Datoen under «Gjenta» er ikke gyldig.');
+      if (gjenta < dato) throw new Error('«Gjenta til og med» kan ikke være før datoen.');
+      datoer = ukentligeDatoer(dato, gjenta);
+      if (datoer.length > MAKS_UKER) throw new Error('Du kan legge inn maks ' + MAKS_UKER + ' uker om gangen.');
+    }
+    const motstander = tekstFelt(d.motstander);
+    const felles = {
+      kind: type,
+      title: tekstFelt(d.navn) || standardTittel(type, motstander),
+      location: tekstFelt(d.sted),
+      opponent: motstander,
+      theme: tekstFelt(d.tema),
+      why: tekstFelt(d.hvorfor),
+      details: tekstFelt(d.opplegg),
+      status: HENDELSE_STATUS[d.status] ? d.status : 'bekreftet'
+    };
+    const rader = datoer.map((ds) => Object.assign({}, felles, {
+      starts_at: osloTidspunkt(ds, start).toISOString(),
+      ends_at: slutt ? osloTidspunkt(ds, slutt).toISOString() : null,
+      meet_at: oppmote ? osloTidspunkt(ds, oppmote).toISOString() : null,
+      period_id: periodeIdFor(S.perioder, ds)
+    }));
+    if (d.id) {
+      const svar = await api.rest('events?id=eq.' + encodeURIComponent(d.id) + '&select=id', { metode: 'PATCH', prefer: 'return=representation', kropp: rader[0] });
+      if (!svar || !svar.length) throw new Error('Fant ikke økta. Last siden på nytt og prøv igjen.');
+    } else {
+      await api.rest('events', { metode: 'POST', prefer: 'return=minimal', kropp: rader });
+    }
+    S.hendelser = (await api.rest('events?select=*&order=starts_at.asc')) || [];
+    if (rader[0].period_id) UI.periode = rader[0].period_id;
+    UI.melding = d.id ? 'Endringene er lagret. Spillerne ser dem nå.'
+      : rader.length === 1 ? 'Økta er lagt inn. Spillerne ser den nå.'
+        : rader.length + ' økter er lagt inn, ' + dagInfo(rader[0].starts_at).lang.toLowerCase() + ' til ' + dagInfo(rader[rader.length - 1].starts_at).lang.toLowerCase() + '.';
+    gaTil('kalender');
   },
 
   async 'inspirasjon'(d) {
@@ -2587,6 +2790,23 @@ async function vedKlikk(e) {
         gaTil('kalender?vis=min');
       }
     });
+  } else if (h === 'slett-hendelse') {
+    if (!window.confirm('Slette økta? Den forsvinner fra kalenderen til alle spillerne.')) return;
+    await utfor(async () => {
+      let rader;
+      try {
+        rader = await api.rest('events?id=eq.' + encodeURIComponent(el.dataset.id) + '&select=id', { metode: 'DELETE', prefer: 'return=representation' });
+      } catch (feil) {
+        if (feil instanceof ApiFeil && feil.kode === '23503') throw new Error('Noen har logget økta, så den kan ikke slettes. Velg «Avlyst» i stedet.');
+        throw feil;
+      }
+      if (!rader || !rader.length) throw new Error('Fant ikke økta. Last siden på nytt og prøv igjen.');
+      S.hendelser = (await api.rest('events?select=*&order=starts_at.asc')) || [];
+      UI.melding = 'Økta er slettet.';
+      gaTil('kalender');
+    });
+  } else if (h === 'oppdater') {
+    location.reload();
   } else if (h === 'slett-inspirasjon') {
     if (!window.confirm('Slette dette fra Inspirasjon?')) return;
     await utfor(async () => {
@@ -2627,6 +2847,48 @@ async function vedKlikk(e) {
   }
 }
 
+/* ---------- Ny versjon av siden ---------- */
+
+/*
+ * index.html laster app.js?v=… der v endres for hver ny versjon. Nettleseren kan likevel vise
+ * en gammel kopi en stund etter at siden er oppdatert, og en app på hjemskjermen lastes sjelden
+ * på nytt. Derfor sjekker siden ved start og når den vises igjen om index.html peker på en ny
+ * versjon, og viser i så fall en knapp for å laste inn på nytt.
+ */
+const VERSJON = (() => {
+  try {
+    return new URL(document.currentScript.src).searchParams.get('v') || '';
+  } catch (e) {
+    return '';
+  }
+})();
+let sistSjekket = 0;
+
+function nyVersjonFra(html) {
+  const funnet = String(html).match(/app\.js\?v=([\w-]+)/);
+  return funnet && funnet[1] !== VERSJON ? funnet[1] : '';
+}
+
+async function sjekkVersjon() {
+  if (!VERSJON || document.querySelector('.oppdatering') || Date.now() - sistSjekket < 60000) return;
+  sistSjekket = Date.now();
+  try {
+    const svar = await fetch(location.pathname + '?versjon=' + Date.now(), { cache: 'no-store' });
+    if (svar.ok && nyVersjonFra(await svar.text())) visOppdatering();
+  } catch (e) {
+    /* uten nett: prøver igjen neste gang siden vises */
+  }
+}
+
+function visOppdatering() {
+  const el = document.createElement('div');
+  el.className = 'oppdatering';
+  el.setAttribute('role', 'status');
+  el.innerHTML = '<p><strong>Siden er oppdatert</strong>Last inn på nytt for å få det nyeste.</p>'
+    + '<button type="button" data-handling="oppdater">Last inn</button>';
+  document.body.appendChild(el);
+}
+
 /* ---------- Tegning og oppstart ---------- */
 
 const SIDER = {
@@ -2635,6 +2897,7 @@ const SIDER = {
   egentrening: ['Egentrening', visEgentrening],
   inspirasjon: ['Hjem', visHjem],
   oppforing: ['Min kalender', visOppforing],
+  hendelse: ['Økt', visHendelse],
   uke: ['Denne uka', visUke],
   kalender: ['Kalender', visKalender],
   spillmodell: ['Spillmodell', visSpillmodell],
@@ -2650,7 +2913,7 @@ const SIDER = {
 /* Hvem som kan åpne hvilke sider. Resten er for alle innloggede. */
 const SIDE_ROLLER = {
   logg: ['spiller'], oppforing: ['spiller', 'trener'], mal: ['spiller', 'trener'],
-  trener: ['trener'], okt: ['trener'], spiller: ['trener']
+  trener: ['trener'], okt: ['trener'], spiller: ['trener'], hendelse: ['trener']
 };
 
 function gjeldendeRute() {
@@ -2709,7 +2972,11 @@ function start() {
   window.addEventListener('hashchange', tegn);
   document.addEventListener('click', vedKlikk);
   document.addEventListener('submit', vedSkjema);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') sjekkVersjon();
+  });
   last();
+  sjekkVersjon();
 }
 
 if (typeof document !== 'undefined' && typeof window !== 'undefined') start();
