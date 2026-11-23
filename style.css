@@ -931,6 +931,18 @@ a.lenkerad:hover { background: #F7FAFC; color: inherit; }
   cursor: pointer;
 }
 
+/* Spillersamtaler */
+button.rad { width: 100%; margin: 0; border: 0; border-top: 1px solid var(--skille); background: var(--hvit); color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.samtale-tid .tid { flex: none; min-width: 112px; white-space: nowrap; font-family: var(--overskrift); font-stretch: condensed; font-weight: 700; font-size: 19px; }
+.samtale-tid.ledig:hover { background: #F7FAFC; }
+.samtale-tid.ledig:disabled { opacity: 0.6; cursor: default; }
+.samtale-tid.tatt .tid, .samtale-tid.tom .tid { color: var(--dempet); font-weight: 600; }
+.samtale-tid.pause { min-height: 44px; background: #F7FAFC; }
+.samtale-tid.pause .tid { color: var(--dempet); font-size: 16px; font-weight: 600; }
+.samtale-tid.min { background: var(--gronn-bg); }
+.samtale-tid .lenkeknapp { flex: none; }
+.merkelapp.velg { background: var(--bla); color: var(--hvit); }
+
 @media (min-width: 700px) {
   .innhold { padding-top: 28px; }
   .periodekort img { height: 180px; }

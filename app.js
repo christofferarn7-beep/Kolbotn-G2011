@@ -672,6 +672,10 @@ const S = {
   programmer: [],
   inspirasjon: [],
   barn: [],
+  samtaler: [],
+  samtaleTider: [],
+  samtaleSvar: [],
+  samtaleFeil: false,
   trener: null,
   lastFeil: ''
 };
@@ -700,6 +704,10 @@ function nullstill() {
   S.programmer = [];
   S.inspirasjon = [];
   S.barn = [];
+  S.samtaler = [];
+  S.samtaleTider = [];
+  S.samtaleSvar = [];
+  S.samtaleFeil = false;
   S.trener = null;
   S.lastFeil = '';
   UI.periode = null;
@@ -729,9 +737,37 @@ async function lastAlt() {
   S.inspirasjon = inspirasjon || [];
   S.sider = {};
   for (const side of sider || []) S.sider[side.slug] = side;
+  /* Samtaletidene hentes samtidig. Feiler de, virker resten av siden likevel. */
+  const samtaler = hentSamtaler().then(() => null, (feil) => feil);
   if (S.profil.role === 'spiller') await lastSpiller();
   if (S.profil.role === 'forelder') await lastForelder();
   if (S.profil.role === 'trener') await lastTrener();
+  const samtaleFeil = await samtaler;
+  if (samtaleFeil) {
+    if (samtaleFeil instanceof ApiFeil && samtaleFeil.status === 401) throw samtaleFeil;
+    S.samtaleFeil = true;
+  }
+}
+
+/* Runder, ledige tider (uten navn) og egne svar. Treneren får i tillegg hvem som har hvilken tid. */
+async function hentSamtaler() {
+  const [runder, tider, svar] = await Promise.all([
+    api.rest('samtaler?select=*&order=created_at.desc'),
+    api.rest('rpc/samtale_tider_status', { metode: 'POST', kropp: {} }),
+    api.rest('samtale_svar?select=*')
+  ]);
+  S.samtaler = runder || [];
+  S.samtaleTider = tider || [];
+  S.samtaleSvar = svar || [];
+  S.samtaleFeil = false;
+}
+
+async function lastSamtaler() {
+  const trener = erTrener() && !UI.visSom && S.trener;
+  await Promise.all([
+    hentSamtaler(),
+    trener ? api.rest('samtale_tider?select=*&order=starts_at.asc').then((rader) => { S.trener.samtaleTider = rader || []; }) : null
+  ]);
 }
 
 async function lastSpiller() {
@@ -764,7 +800,7 @@ async function lastForelder() {
 
 async function lastTrener() {
   const fra = new Date(Date.now() - 120 * DAG_MS).toISOString();
-  const [spillere, profiler, lenker, samtykker, koder, soner, logger, mal, kalender] = await Promise.all([
+  const [spillere, profiler, lenker, samtykker, koder, soner, logger, mal, kalender, samtaleTider] = await Promise.all([
     api.rest('players?select=id,full_name,position,active&order=full_name.asc'),
     api.rest('profiles?select=id,username,full_name,role,player_id&order=full_name.asc'),
     api.rest('parent_links?select=parent_id,player_id'),
@@ -773,7 +809,11 @@ async function lastTrener() {
     api.rest('vekstsoner?select=*'),
     api.rest('session_logs?select=*&created_at=gte.' + encodeURIComponent(fra) + '&order=created_at.desc&limit=5000'),
     api.rest('goals?select=*&order=created_at.asc'),
-    api.rest('personal_entries?select=*&order=starts.asc&limit=5000')
+    api.rest('personal_entries?select=*&order=starts.asc&limit=5000'),
+    api.rest('samtale_tider?select=*&order=starts_at.asc').catch((feil) => {
+      if (feil instanceof ApiFeil && feil.status === 401) throw feil;
+      return [];
+    })
   ]);
   S.trener = {
     spillere: spillere || [],
@@ -784,7 +824,8 @@ async function lastTrener() {
     soner: soner || [],
     logger: logger || [],
     mal: mal || [],
-    kalender: kalender || []
+    kalender: kalender || [],
+    samtaleTider: samtaleTider || []
   };
 }
 
@@ -882,6 +923,7 @@ const FANE_FOR = {
 function faneFor(aktiv) {
   if (aktiv === 'oppforing' && S.profil.role === 'trener') return ruteParam('fra') === 'kalender' ? 'kalender' : 'trener';
   if (aktiv === 'mal' && S.profil.role === 'trener') return 'trener';
+  if (aktiv === 'samtale') return S.profil.role === 'trener' ? 'trener' : 'hjem';
   return FANE_FOR[aktiv] || aktiv;
 }
 
@@ -955,6 +997,7 @@ function visUke() {
       + '</div></section>';
   }
 
+  html += samtaleKort();
   if (S.profil.role === 'spiller' && harSamtykke(S.profil.player_id)) html += loggPaaminnelse() + hoydePaaminnelse();
 
   if (neste) {
@@ -1367,6 +1410,7 @@ function delSkjema() {
 function visHjem() {
   const fornavn = String(S.profil.full_name || '').trim().split(/\s+/)[0] || '';
   let html = '<div class="overskrift"><p class="overlinje">Kolbotn G2011 · TG1</p><h1>' + (fornavn ? 'Hei, ' + esc(fornavn) + '!' : 'Hjem') + '</h1></div>'
+    + samtaleKort()
     + appForklaring();
   if (S.profil.role === 'trener') html += delSkjema();
   if (!S.inspirasjon.length) {
@@ -1386,6 +1430,347 @@ function visMer() {
     + bokser.map(([rute, navn, tekst, ikon]) => '<a class="boks" href="#/' + rute + '"><span class="boks-ikon">' + ikon + '</span>'
       + '<span class="boks-navn">' + esc(navn) + '</span><span class="boks-tekst">' + esc(tekst) + '</span></a>').join('')
     + '</div>';
+}
+
+/* ---------- Spillersamtaler ---------- */
+
+/*
+ * Treneren har en runde med faste tider (samtaler og samtale_tider). Spillerne booker selv,
+ * først til mølla, eller svarer at de heller vil ha annen dag eller telefon (samtale_svar).
+ * Spillere og foreldre får bare vite om en tid er ledig og hvilken som er deres
+ * (samtale_tider_status i databasen). Bare treneren ser hvem som har hvilken tid.
+ * Spillerne kan ikke booke før treneren har åpnet påmeldingen.
+ */
+const SAMTALE_VALG = { annen_dag: 'Annen dag', telefon: 'Telefon eller video', annet: 'Annet' };
+
+function tiderFor(runde, kilde) {
+  return (kilde || S.samtaleTider).filter((t) => t.samtale_id === runde.id)
+    .sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+}
+
+/* Runder med minst én tid som ikke er passert, den første først. */
+function aktiveSamtaler() {
+  const naa = Date.now();
+  return S.samtaler
+    .filter((r) => tiderFor(r).some((t) => new Date(t.ends_at).getTime() > naa))
+    .sort((a, b) => new Date(tiderFor(a)[0].starts_at) - new Date(tiderFor(b)[0].starts_at));
+}
+
+function samtaleDag(runde) {
+  const tider = tiderFor(runde);
+  return tider.length ? dagInfo(tider[0].starts_at).lang : '';
+}
+
+function samtaleSted(runde) {
+  return runde.location ? ' · ' + runde.location : '';
+}
+
+/* Spillerens egen tid og svar i en runde. For en forelder: barnets. */
+function mittSamtaleSvar(runde) {
+  return {
+    tid: tiderFor(runde).find((t) => t.min) || null,
+    svar: S.samtaleSvar.find((s) => s.samtale_id === runde.id) || null
+  };
+}
+
+/* Setter inn pauser der det er et hull mellom to tider. */
+function tiderMedPauser(tider) {
+  const ut = [];
+  tider.forEach((t, i) => {
+    const forrige = tider[i - 1];
+    if (forrige && new Date(t.starts_at) > new Date(forrige.ends_at)) {
+      ut.push({ pause: true, starts_at: forrige.ends_at, ends_at: t.starts_at });
+    }
+    ut.push(t);
+  });
+  return ut;
+}
+
+/* Kort på Hjem og Denne uka: book tid, eller tiden du har. */
+function samtaleKort() {
+  const rolle = S.profil.role;
+  if (rolle !== 'spiller' && rolle !== 'forelder') return '';
+  return aktiveSamtaler().map((r) => {
+    const { tid, svar } = mittSamtaleSvar(r);
+    if (tid) {
+      return '<section class="kort uthevet"><p class="overlinje">' + esc(r.title) + '</p>'
+        + '<p><strong>' + (rolle === 'spiller' ? 'Din tid: ' : 'Tiden til gutten din: ')
+        + esc(dagInfo(tid.starts_at).lang.toLowerCase() + ' kl. ' + tidTekst(tid)) + '</strong></p>'
+        + (r.location ? '<p class="dempet liten">' + esc(r.location) + '</p>' : '')
+        + '<a class="lenkeknapp" href="#/samtale">' + (rolle === 'spiller' && r.apen ? 'Se eller bytt tid' : 'Se samtalen') + '</a></section>';
+    }
+    if (svar) {
+      return '<section class="kort"><p class="overlinje">' + esc(r.title) + '</p>'
+        + '<p><strong>' + (rolle === 'spiller' ? 'Du har svart: ' : 'Svar: ') + esc(SAMTALE_VALG[svar.valg] || svar.valg) + '</strong></p>'
+        + '<p class="dempet liten">Treneren tar kontakt for å avtale.</p>'
+        + '<a class="lenkeknapp" href="#/samtale">Se samtalen</a></section>';
+    }
+    if (!r.apen || rolle !== 'spiller') return '';
+    const tider = tiderFor(r);
+    const ledige = tider.filter((t) => t.ledig).length;
+    return '<section class="kort uthevet"><p class="overlinje">' + esc(r.title) + '</p>'
+      + '<p><strong>Book tid til samtalen</strong></p>'
+      + '<p class="dempet liten">' + esc(samtaleDag(r) + samtaleSted(r)) + '. '
+      + (ledige ? ledige + ' av ' + tider.length + ' tider er ledige. Først til mølla.' : 'Alle tidene er tatt. Si fra hva som passer.') + '</p>'
+      + '<a class="knapp liten-knapp" href="#/samtale">' + (ledige ? 'Book tid' : 'Svar her') + '</a></section>';
+  }).join('');
+}
+
+function visSamtale() {
+  if (S.profil.role === 'trener') return visSamtaleTrener();
+  const forelder = S.profil.role === 'forelder';
+  const html = '<div class="overskrift"><p class="overlinje">Spillersamtale</p><h1>' + (forelder ? 'Samtale med treneren' : 'Book tid') + '</h1></div>';
+  if (S.samtaleFeil) return html + '<section class="kort tomt"><p>Fikk ikke hentet tidene. Last siden på nytt.</p></section>';
+  const runder = aktiveSamtaler();
+  if (!runder.length) return html + '<section class="kort tomt"><p>Det er ingen samtaler å booke akkurat nå.</p></section>';
+  return html + runder.map(forelder ? samtaleForelder : samtaleSpiller).join('');
+}
+
+function samtaleInfo(r) {
+  return '<section class="kort"><p class="overlinje">' + esc(samtaleDag(r) + samtaleSted(r)) + '</p>'
+    + '<h2>' + esc(r.title) + '</h2>'
+    + (r.details ? '<p>' + esc(r.details) + '</p>' : '') + '</section>';
+}
+
+function samtaleSpiller(r) {
+  const { tid, svar } = mittSamtaleSvar(r);
+  /* I forhåndsvisningen ser treneren hvordan det blir når påmeldingen er åpen. */
+  const apen = r.apen || Boolean(UI.visSom);
+  const tider = tiderFor(r);
+  const ledige = tider.filter((t) => t.ledig).length;
+  let html = samtaleInfo(r);
+  if (UI.visSom && !r.apen) html += '<p class="varsel ok">Påmeldingen er stengt. Slik ser det ut for spillerne når du har åpnet den.</p>';
+  if (tid) {
+    html += '<section class="kort uthevet"><p class="overlinje">Din tid</p>'
+      + '<p class="tid-stor">' + esc(tidTekst(tid)) + '</p>'
+      + '<p><strong>' + esc(dagInfo(tid.starts_at).lang) + '</strong>' + esc(samtaleSted(r)) + '</p>'
+      + (apen
+        ? '<p class="dempet liten">Vil du bytte, trykker du på en annen ledig tid under.</p>'
+          + '<button type="button" class="lenkeknapp" data-handling="avbestill-samtale" data-samtale="' + esc(r.id) + '">Gi fra meg tiden</button>'
+        : '<p class="dempet liten">Må du endre noe, send en melding til treneren.</p>')
+      + '</section>';
+  } else if (svar) {
+    html += '<section class="kort uthevet"><p class="overlinje">Ditt svar</p>'
+      + '<p><strong>' + esc(SAMTALE_VALG[svar.valg] || svar.valg) + '</strong></p>'
+      + (svar.merknad ? '<p>' + esc(svar.merknad) + '</p>' : '')
+      + '<p class="dempet liten">Treneren tar kontakt for å avtale.'
+      + (apen && ledige ? ' Vil du heller ha en av tidene ' + esc(samtaleDag(r).toLowerCase()) + ', velger du en ledig tid under.' : '') + '</p></section>';
+  }
+  if (!apen) {
+    if (!tid && !svar) {
+      html += '<section class="kort tomt"><p><strong>Påmeldingen åpner snart</strong></p>'
+        + '<p class="dempet liten">Du får beskjed i Hoopit når du kan booke.</p></section>';
+    }
+    return html;
+  }
+  html += '<section class="uke"><div class="ukehode"><h2>Velg tid</h2><span>'
+    + (ledige ? ledige + ' av ' + tider.length + ' ledige' : 'Alle er tatt') + '</span></div>'
+    + '<div class="liste">' + tiderMedPauser(tider).map(samtaleRad).join('') + '</div>'
+    + (ledige ? '<p class="dempet liten">Først til mølla. Tar noen tiden rett før deg, får du beskjed og kan velge en annen.</p>' : '')
+    + '</section>';
+  const skjema = samtaleAnnenSkjema(r, svar, tid);
+  html += tid || svar
+    ? '<details class="kort del"><summary class="lenkeknapp">' + (tid ? 'Passer det ikke likevel?' : 'Endre svaret') + '</summary>' + skjema + '</details>'
+    : '<section class="kort"><h2>Passer ikke?</h2><p class="dempet liten">'
+      + (ledige ? 'Passer ingen av tidene' : 'Er alle tidene tatt') + '? Si hva som passer, så avtaler treneren med deg.</p>' + skjema + '</section>';
+  return html;
+}
+
+function samtaleRad(t) {
+  const tid = '<span class="tid">' + esc(tidTekst(t)) + '</span>';
+  if (t.pause) return '<div class="rad samtale-tid pause">' + tid + '<span class="rad-tekst"><span class="under">Pause</span></span></div>';
+  if (t.min) {
+    return '<div class="rad samtale-tid min">' + tid + '<span class="rad-tekst"><span class="navn">Din tid</span></span>'
+      + '<span class="merkelapp sone-gronn">Booket</span></div>';
+  }
+  if (!t.ledig) return '<div class="rad samtale-tid tatt">' + tid + '<span class="rad-tekst"><span class="under">Opptatt</span></span></div>';
+  return '<button type="button" class="rad samtale-tid ledig" data-handling="book-samtale" data-id="' + esc(t.id) + '">' + tid
+    + '<span class="rad-tekst"><span class="under">Ledig</span></span><span class="merkelapp velg">Book</span></button>';
+}
+
+function samtaleAnnenSkjema(r, svar, tid) {
+  const id = 'smerknad-' + r.id;
+  return '<form class="skjema" data-skjema="samtale-annen" novalidate><input type="hidden" name="samtale" value="' + esc(r.id) + '">'
+    + '<fieldset class="felt"><legend>Hva passer best?</legend><div class="valg-rad">' + valgknapper('valg', SAMTALE_VALG, svar ? svar.valg : '') + '</div></fieldset>'
+    + '<div class="felt"><label for="' + esc(id) + '">Når passer det? (valgfritt)</label><input id="' + esc(id) + '" name="merknad" maxlength="300" autocomplete="off"'
+    + ' placeholder="F.eks. tirsdag etter trening" value="' + esc(svar && svar.merknad ? svar.merknad : '') + '"></div>'
+    + (tid ? '<p class="dempet liten">Da gir du fra deg tiden ' + esc(tidTekst(tid)) + '.</p>' : '')
+    + skjemafeil() + '<button class="knapp sekundar" type="submit">Send svar</button></form>';
+}
+
+function samtaleForelder(r) {
+  const mine = tiderFor(r).filter((t) => t.min);
+  const svar = S.samtaleSvar.filter((s) => s.samtale_id === r.id);
+  let html = samtaleInfo(r);
+  if (mine.length) {
+    html += '<section class="kort uthevet"><p class="overlinje">Tiden til gutten din</p>'
+      + mine.map((t) => '<p class="tid-stor">' + esc(tidTekst(t)) + '</p><p><strong>' + esc(dagInfo(t.starts_at).lang) + '</strong>' + esc(samtaleSted(r)) + '</p>').join('')
+      + '</section>';
+  } else if (svar.length) {
+    html += '<section class="kort"><p class="overlinje">Gutten din har svart</p>'
+      + svar.map((s) => '<p><strong>' + esc(SAMTALE_VALG[s.valg] || s.valg) + '</strong>' + (s.merknad ? ': ' + esc(s.merknad) : '') + '</p>').join('')
+      + '<p class="dempet liten">Treneren tar kontakt for å avtale.</p></section>';
+  } else {
+    html += '<section class="kort tomt"><p>' + (r.apen
+      ? 'Gutten din har ikke booket tid ennå. Spillerne booker selv i appen.'
+      : 'Påmeldingen er ikke åpnet ennå. Spillerne booker selv i appen når den åpner.') + '</p></section>';
+  }
+  return html;
+}
+
+/* Treneren: hvem som har booket, hvem som har valgt annen løsning, og hvem som ikke har svart. */
+function samtaleTall(r) {
+  const t = S.trener;
+  const tider = tiderFor(r, t.samtaleTider || []);
+  const svar = S.samtaleSvar.filter((s) => s.samtale_id === r.id);
+  const medTid = new Set(tider.filter((x) => x.player_id).map((x) => x.player_id));
+  const medSvar = new Set(svar.map((s) => s.player_id));
+  const aktive = t.spillere.filter((s) => s.active);
+  return {
+    tider,
+    svar,
+    medTid,
+    medSvar,
+    aktive,
+    ikkeSvart: aktive.filter((s) => !medTid.has(s.id) && !medSvar.has(s.id))
+  };
+}
+
+function samtaleTrenerKort() {
+  if (!S.trener) return '';
+  return aktiveSamtaler().map((r) => {
+    const n = samtaleTall(r);
+    return '<section class="kort uthevet"><div class="kort-topp"><p class="overlinje">' + esc(r.title) + '</p>'
+      + (r.apen ? '<span class="merkelapp sone-gronn">Åpen</span>' : '<span class="merkelapp">Stengt</span>') + '</div>'
+      + '<p><strong>' + esc(samtaleDag(r)) + ': ' + n.medTid.size + ' av ' + n.tider.length + ' tider booket</strong></p>'
+      + '<p class="dempet liten">' + n.svar.length + ' annen løsning · ' + n.ikkeSvart.length + ' har ikke svart</p>'
+      + '<a class="knapp liten-knapp" href="#/samtale">' + (r.apen ? 'Se oversikten' : 'Åpne påmeldingen') + '</a></section>';
+  }).join('');
+}
+
+/* Fornavn, med forbokstav i etternavnet når flere har samme fornavn. */
+function kortNavn(id, aktive) {
+  const s = aktive.find((x) => x.id === id);
+  if (!s) return spillerNavn(id);
+  const deler = s.full_name.trim().split(/\s+/);
+  const like = aktive.filter((x) => x.full_name.trim().split(/\s+/)[0] === deler[0]).length;
+  return like > 1 && deler.length > 1 ? deler[0] + ' ' + deler[deler.length - 1].charAt(0) + '.' : deler[0];
+}
+
+function samtaleTimeplanTekst(r, n) {
+  const sted = r.location ? ', ' + r.location.charAt(0).toLowerCase() + r.location.slice(1) : '';
+  const linjer = ['Timeplan for samtalene ' + samtaleDag(r).toLowerCase() + sted + ':', ''];
+  tiderMedPauser(n.tider).forEach((x) => {
+    linjer.push(tidTekst(x) + '  ' + (x.pause ? 'Pause' : x.player_id ? kortNavn(x.player_id, n.aktive) : 'Ledig'));
+  });
+  linjer.push('', 'Har du ikke fått tid, tar jeg kontakt for å avtale.');
+  return linjer.join('\n');
+}
+
+function visSamtaleTrener() {
+  let html = '<div class="overskrift"><p class="overlinje">Bare for trenere</p><h1>Spillersamtaler</h1></div>';
+  if (!S.trener) return html + '<section class="kort tomt"><p>Laster …</p></section>';
+  if (S.samtaleFeil) return html + '<section class="kort tomt"><p>Fikk ikke hentet samtalene. Last siden på nytt.</p></section>';
+  const runder = aktiveSamtaler();
+  if (!runder.length) return html + '<section class="kort tomt"><p>Ingen kommende samtaler.</p></section>';
+  return html + runder.map(samtaleTrener).join('');
+}
+
+function samtaleTrener(r) {
+  const n = samtaleTall(r);
+  let html = '<section class="kort"><div class="kort-topp"><p class="overlinje">' + esc(samtaleDag(r) + samtaleSted(r)) + '</p>'
+    + (r.apen ? '<span class="merkelapp sone-gronn">Åpen</span>' : '<span class="merkelapp">Stengt</span>') + '</div>'
+    + '<h2>' + esc(r.title) + '</h2>'
+    + '<p class="dempet liten">' + (r.apen
+      ? 'Spillerne kan booke, bytte og svare nå.'
+      : 'Spillerne ser «Påmeldingen åpner snart» til du åpner. Åpne når du sender meldingen i Hoopit.') + '</p>'
+    + '<button type="button" class="knapp' + (r.apen ? ' sekundar' : '') + '" data-handling="samtale-apen" data-id="' + esc(r.id) + '" data-apen="' + (r.apen ? 'nei' : 'ja') + '">'
+    + (r.apen ? 'Steng påmeldingen' : 'Åpne påmeldingen') + '</button></section>';
+
+  html += '<div class="tall-rad"><div><b>' + n.medTid.size + '/' + n.tider.length + '</b><span>har booket</span></div>'
+    + '<div><b>' + n.svar.length + '</b><span>annen løsning</span></div>'
+    + '<div><b>' + n.ikkeSvart.length + '</b><span>ikke svart</span></div></div>';
+
+  html += '<section class="uke"><h2>Timeplan</h2><div class="liste">' + tiderMedPauser(n.tider).map((x) => {
+    const tid = '<span class="tid">' + esc(tidTekst(x)) + '</span>';
+    if (x.pause) return '<div class="rad samtale-tid pause">' + tid + '<span class="rad-tekst"><span class="under">Pause</span></span></div>';
+    if (!x.player_id) return '<div class="rad samtale-tid tom">' + tid + '<span class="rad-tekst"><span class="under">Ledig</span></span></div>';
+    return '<div class="rad samtale-tid">' + tid + '<span class="rad-tekst"><span class="navn">' + esc(spillerNavn(x.player_id)) + '</span></span>'
+      + '<button type="button" class="lenkeknapp" data-handling="samtale-frigjor" data-id="' + esc(x.id) + '">Frigjør</button></div>';
+  }).join('') + '</div></section>';
+
+  const kandidater = n.aktive.filter((s) => !n.medTid.has(s.id));
+  const ledige = n.tider.filter((x) => !x.player_id);
+  if (kandidater.length && ledige.length) {
+    html += '<section class="kort"><h2>Sett inn en spiller</h2>'
+      + '<p class="dempet liten">For eksempel en som har ringt deg. Virker også når påmeldingen er stengt.</p>'
+      + '<form class="skjema" data-skjema="samtale-sett-inn" novalidate>'
+      + '<div class="felt"><label for="sispiller">Spiller</label><select id="sispiller" name="spiller"><option value="">Velg spiller</option>'
+      + kandidater.map((s) => '<option value="' + esc(s.id) + '">' + esc(s.full_name) + (n.medSvar.has(s.id) ? ' (annen løsning)' : '') + '</option>').join('')
+      + '</select></div>'
+      + '<div class="felt"><label for="sitid">Tid</label><select id="sitid" name="tid"><option value="">Velg tid</option>'
+      + ledige.map((x) => '<option value="' + esc(x.id) + '">' + esc(tidTekst(x)) + '</option>').join('')
+      + '</select></div>'
+      + skjemafeil() + '<button class="knapp sekundar" type="submit">Sett inn</button></form></section>';
+  }
+
+  const svar = n.svar.slice().sort((a, b) => spillerNavn(a.player_id).localeCompare(spillerNavn(b.player_id), 'nb'));
+  html += '<section class="uke"><h2>Annen løsning</h2>' + (svar.length
+    ? '<div class="liste">' + svar.map((s) => '<div class="rad"><div class="rad-tekst"><span class="navn">' + esc(spillerNavn(s.player_id)) + '</span>'
+      + '<span class="under">' + esc((SAMTALE_VALG[s.valg] || s.valg) + (s.merknad ? ': ' + s.merknad : '')) + '</span></div>'
+      + '<button type="button" class="lenkeknapp" data-handling="samtale-fjern-svar" data-samtale="' + esc(r.id) + '" data-spiller="' + esc(s.player_id) + '">Fjern</button></div>').join('') + '</div>'
+    : '<section class="kort tomt"><p class="dempet">Ingen har valgt annen løsning.</p></section>') + '</section>';
+
+  html += '<section class="uke"><h2>Ikke svart</h2>' + (n.ikkeSvart.length
+    ? '<div class="liste">' + n.ikkeSvart.map((s) => '<div class="rad"><div class="rad-tekst"><span class="navn">' + esc(s.full_name) + '</span></div></div>').join('') + '</div>'
+    : '<section class="kort tomt"><p class="dempet">Alle har svart.</p></section>') + '</section>';
+
+  const tekstId = 'stekst-' + r.id;
+  html += '<section class="kort"><h2>Timeplan til Hoopit</h2>'
+    + '<div class="felt"><label for="' + esc(tekstId) + '">Kopier og lim inn i Hoopit</label><textarea id="' + esc(tekstId) + '" readonly rows="8">'
+    + esc(samtaleTimeplanTekst(r, n)) + '</textarea></div>'
+    + '<button type="button" class="knapp sekundar" data-handling="kopier" data-kilde="' + esc(tekstId) + '">Kopier timeplanen</button></section>';
+  return html;
+}
+
+/* Kjører en endring, henter tidene på nytt uansett utfall, og viser resultatet øverst. */
+async function samtaleHandling(arbeid, takk) {
+  await utfor(async () => {
+    let feil = null;
+    try {
+      await arbeid();
+    } catch (e) {
+      if (e instanceof ApiFeil && e.status === 401) throw e;
+      feil = e;
+    }
+    await lastSamtaler();
+    UI.melding = feil ? '' : takk;
+    tegn();
+    window.scrollTo(0, 0);
+    if (feil) alertFeil(feiltekst(feil));
+  });
+}
+
+async function bookSamtale(el) {
+  const t = S.samtaleTider.find((x) => x.id === el.dataset.id);
+  if (!t || !t.ledig) return;
+  const har = S.samtaleTider.find((x) => x.samtale_id === t.samtale_id && x.min);
+  if (har && !window.confirm('Bytte fra ' + tidTekst(har) + ' til ' + tidTekst(t) + '?')) return;
+  const takk = 'Du har fått ' + dagInfo(t.starts_at).lang.toLowerCase() + ' kl. ' + tidTekst(t) + '. Vi ses!';
+  if (UI.visSom) {
+    S.samtaleTider = S.samtaleTider.map((x) => {
+      if (x.id === t.id) return Object.assign({}, x, { ledig: false, min: true });
+      if (x.samtale_id === t.samtale_id && x.min) return Object.assign({}, x, { ledig: true, min: false });
+      return x;
+    });
+    S.samtaleSvar = S.samtaleSvar.filter((s) => s.samtale_id !== t.samtale_id);
+    UI.melding = 'Forhåndsvisning: tiden er ikke booket.';
+    tegn();
+    window.scrollTo(0, 0);
+    return;
+  }
+  el.disabled = true;
+  await samtaleHandling(() => api.rest('rpc/book_samtaletid', { metode: 'POST', kropp: { p_tid: t.id } }), takk);
 }
 
 /* ---------- Egentrening ---------- */
@@ -1483,7 +1868,7 @@ function feedHode(kilde, tidspunkt) {
 
 /* Sider en beskjed i feeden kan lenke til. Samme mønster som i databasen. */
 const RUTE_RE = /^[a-z]+(\?[a-z0-9=&_.-]+)?$/;
-const RUTE_NAVN = { egentrening: 'Egentrening', kalender: 'Kalender', uke: 'Denne uka', spillmodell: 'Spillmodell', plan: 'Utviklingsplan 2027', mer: 'Mer', meg: 'Meg' };
+const RUTE_NAVN = { egentrening: 'Egentrening', kalender: 'Kalender', uke: 'Denne uka', spillmodell: 'Spillmodell', plan: 'Utviklingsplan 2027', mer: 'Mer', meg: 'Meg', samtale: 'Spillersamtale' };
 
 /* Beskjed fra trenerne: bilde, tekst og en knapp til en side i appen. */
 function beskjedKort(i) {
@@ -2087,6 +2472,7 @@ function visTrener() {
       + '<button type="button" class="lenkeknapp" data-handling="lukk-kode">Ferdig</button></section>';
   }
 
+  html += samtaleTrenerKort();
   html += kalenderVerktoy(true);
 
   html += '<section class="kort"><h2>Se siden som spiller eller forelder</h2>'
@@ -2278,11 +2664,17 @@ function startVisning(rolle) {
   if (rolle !== 'spiller' && rolle !== 'forelder') return;
   UI.ekte = {
     profil: S.profil, sider: S.sider, spiller: S.spiller, samtykker: S.samtykker, hoyder: S.hoyder,
-    barn: S.barn, hendelser: S.hendelser, logger: S.logger, mal: S.mal, kalender: S.kalender
+    barn: S.barn, hendelser: S.hendelser, logger: S.logger, mal: S.mal, kalender: S.kalender,
+    samtaleTider: S.samtaleTider, samtaleSvar: S.samtaleSvar
   };
   UI.visSom = rolle;
   UI.kodeResultat = null;
   S.sider = Object.fromEntries(Object.entries(S.sider).filter(([, side]) => side.audience === 'alle'));
+  /* Samtaletidene slik spillerne ser dem: ledig eller opptatt, uten navn. */
+  S.samtaleTider = ((S.trener && S.trener.samtaleTider) || []).map((t) => ({
+    id: t.id, samtale_id: t.samtale_id, starts_at: t.starts_at, ends_at: t.ends_at, ledig: !t.player_id, min: false
+  }));
+  S.samtaleSvar = [];
   if (rolle === 'spiller') {
     S.profil = { id: 'demo-profil', username: 'ola.n', full_name: DEMO_SPILLER.full_name, role: 'spiller', player_id: DEMO_SPILLER.id };
     S.spiller = DEMO_SPILLER;
@@ -2331,7 +2723,9 @@ const SKJEMA = {
     await api.loggInn(brukernavn, d.passord);
     await lastAlt();
     UI.melding = '';
-    gaTil('hjem');
+    /* Kom han fra en lenke til en bestemt side (f.eks. #/samtale fra Hoopit), går han dit. */
+    const rute = gjeldendeRute();
+    gaTil(rute && SIDER[rute] ? location.hash.replace(/^#\/?/, '') : 'hjem');
   },
 
   async 'forste-gang'(d) {
@@ -2611,6 +3005,42 @@ const SKJEMA = {
     await lastTrener();
     UI.melding = 'Kommentaren er lagret.';
     tegn();
+  },
+
+  async 'samtale-annen'(d) {
+    if (!SAMTALE_VALG[d.valg]) throw new Error('Velg hva som passer best.');
+    const merknad = tekstFelt(d.merknad);
+    if (merknad && merknad.length > 300) throw new Error('Skriv litt kortere (maks 300 tegn).');
+    const har = S.samtaleTider.find((x) => x.samtale_id === d.samtale && x.min);
+    if (har && !window.confirm('Da gir du fra deg tiden ' + tidTekst(har) + '. Vil du det?')) {
+      throw new Error('Svaret er ikke sendt. Du har fortsatt tiden ' + tidTekst(har) + '.');
+    }
+    if (UI.visSom) {
+      S.samtaleTider = S.samtaleTider.map((x) => (x.samtale_id === d.samtale && x.min ? Object.assign({}, x, { ledig: true, min: false }) : x));
+      S.samtaleSvar = S.samtaleSvar.filter((s) => s.samtale_id !== d.samtale)
+        .concat([{ samtale_id: d.samtale, player_id: S.profil.player_id, valg: d.valg, merknad, created_at: new Date().toISOString() }]);
+      UI.melding = 'Forhåndsvisning: svaret er ikke sendt.';
+      tegn();
+      window.scrollTo(0, 0);
+      return;
+    }
+    await api.rest('rpc/samtale_annen_losning', { metode: 'POST', kropp: { p_samtale: d.samtale, p_valg: d.valg, p_merknad: merknad } });
+    await lastSamtaler();
+    UI.melding = 'Takk! Treneren tar kontakt for å avtale.';
+    tegn();
+    window.scrollTo(0, 0);
+  },
+
+  async 'samtale-sett-inn'(d) {
+    if (!erTrener()) return;
+    if (!d.spiller) throw new Error('Velg spiller.');
+    if (!d.tid) throw new Error('Velg tid.');
+    const x = (S.trener.samtaleTider || []).find((y) => y.id === d.tid);
+    await api.rest('rpc/book_samtaletid', { metode: 'POST', kropp: { p_tid: d.tid, p_spiller: d.spiller } });
+    await lastSamtaler();
+    UI.melding = spillerNavn(d.spiller) + ' er satt inn' + (x ? ' ' + tidTekst(x) : '') + '.';
+    tegn();
+    window.scrollTo(0, 0);
   },
 
   async 'bytt-passord'(d) {
@@ -2905,6 +3335,45 @@ async function vedKlikk(e) {
         gaTil('meg');
       }
     });
+  } else if (h === 'book-samtale') {
+    await bookSamtale(el);
+  } else if (h === 'avbestill-samtale') {
+    const har = S.samtaleTider.find((x) => x.samtale_id === el.dataset.samtale && x.min);
+    if (!har || !window.confirm('Gi fra deg tiden ' + tidTekst(har) + '? Da kan noen andre ta den.')) return;
+    if (UI.visSom) {
+      S.samtaleTider = S.samtaleTider.map((x) => (x.id === har.id ? Object.assign({}, x, { ledig: true, min: false }) : x));
+      UI.melding = 'Forhåndsvisning: ingenting er endret.';
+      tegn();
+      return;
+    }
+    el.disabled = true;
+    await samtaleHandling(() => api.rest('rpc/avbestill_samtaletid', { metode: 'POST', kropp: { p_samtale: el.dataset.samtale } }), 'Tiden er gitt fra deg.');
+  } else if (h === 'samtale-apen') {
+    if (!erTrener()) return;
+    const apne = el.dataset.apen === 'ja';
+    if (!window.confirm(apne
+      ? 'Åpne påmeldingen nå? Spillerne kan booke med en gang.'
+      : 'Stenge påmeldingen? Spillerne kan ikke booke, bytte eller svare før du åpner igjen.')) return;
+    el.disabled = true;
+    await samtaleHandling(async () => {
+      const rader = await api.rest('samtaler?id=eq.' + encodeURIComponent(el.dataset.id) + '&select=id', { metode: 'PATCH', prefer: 'return=representation', kropp: { apen: apne } });
+      if (!rader || !rader.length) throw new Error('Fikk ikke endret påmeldingen. Last siden på nytt.');
+    }, apne ? 'Påmeldingen er åpen. Send meldingen i Hoopit nå.' : 'Påmeldingen er stengt.');
+  } else if (h === 'samtale-frigjor') {
+    if (!erTrener()) return;
+    const x = (S.trener.samtaleTider || []).find((y) => y.id === el.dataset.id);
+    if (!x || !window.confirm('Frigjøre ' + tidTekst(x) + ' for ' + spillerNavn(x.player_id) + '?')) return;
+    el.disabled = true;
+    await samtaleHandling(async () => {
+      const rader = await api.rest('samtale_tider?id=eq.' + encodeURIComponent(x.id) + '&select=id', { metode: 'PATCH', prefer: 'return=representation', kropp: { player_id: null, booked_at: null } });
+      if (!rader || !rader.length) throw new Error('Fikk ikke frigjort tiden. Last siden på nytt.');
+    }, tidTekst(x) + ' er ledig igjen.');
+  } else if (h === 'samtale-fjern-svar') {
+    if (!erTrener()) return;
+    if (!window.confirm('Fjerne svaret fra ' + spillerNavn(el.dataset.spiller) + '? Da havner han under «Ikke svart».')) return;
+    el.disabled = true;
+    await samtaleHandling(() => api.rest('samtale_svar?samtale_id=eq.' + encodeURIComponent(el.dataset.samtale)
+      + '&player_id=eq.' + encodeURIComponent(el.dataset.spiller), { metode: 'DELETE', prefer: 'return=minimal' }), 'Svaret er fjernet.');
   } else if (h === 'slett-kode') {
     if (!window.confirm('Slette koden? Den kan ikke brukes etterpå.')) return;
     await utfor(async () => {
@@ -2976,7 +3445,8 @@ const SIDER = {
   mal: ['Utviklingsmål', visMal],
   trener: ['Trener', visTrener],
   okt: ['Logg fra økta', visOkt],
-  spiller: ['Spiller', visSpiller]
+  spiller: ['Spiller', visSpiller],
+  samtale: ['Spillersamtale', visSamtale]
 };
 
 /* Hvem som kan åpne hvilke sider. Resten er for alle innloggede. */
