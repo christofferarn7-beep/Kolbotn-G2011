@@ -1476,8 +1476,75 @@ function erVideo(k) {
   return ['youtube', 'vimeo', 'tiktok', 'instagram'].includes(k.type);
 }
 
-/* Ett kort i feeden. Videoer spilles i kortet, artikler får et lenkekort. */
+function feedHode(kilde, tidspunkt) {
+  return '<header class="feed-hode"><img src="img/kolbotn-logo.png" alt="" width="26" height="32">'
+    + '<span><b>Trenerne i TG1</b><span>' + esc(kilde + ' · ' + datoUtenAar(osloDatoStr(new Date(tidspunkt)))) + '</span></span></header>';
+}
+
+/* Sider en beskjed i feeden kan lenke til. Samme mønster som i databasen. */
+const RUTE_RE = /^[a-z]+(\?[a-z0-9=&_.-]+)?$/;
+const RUTE_NAVN = { egentrening: 'Egentrening', kalender: 'Kalender', uke: 'Denne uka', spillmodell: 'Spillmodell', plan: 'Utviklingsplan 2027', mer: 'Mer', meg: 'Meg' };
+
+/* Beskjed fra trenerne: bilde, tekst og en knapp til en side i appen. */
+function beskjedKort(i) {
+  const rute = i.route && RUTE_RE.test(i.route) && RUTE_NAVN[i.route.split('?')[0]] ? i.route : '';
+  const handlinger = S.profil.role === 'trener'
+    ? '<div class="feed-handlinger"><button type="button" class="lenkeknapp" data-handling="slett-inspirasjon" data-id="' + esc(i.id) + '">Slett</button></div>' : '';
+  return '<article class="feed-kort beskjed">' + feedHode('Beskjed', i.created_at)
+    + (i.image_id ? '<div class="feed-media foto"><img data-bilde="' + esc(i.image_id) + '" alt=""></div>' : '')
+    + '<div class="feed-tekst"><h3>' + esc(i.title) + '</h3>' + (i.note ? '<p>' + esc(i.note) + '</p>' : '') + '</div>'
+    + (rute ? '<a class="feed-lenke" href="#/' + esc(rute) + '"><span>I appen</span><span>Gå til ' + esc(RUTE_NAVN[rute.split('?')[0]]) + ' ›</span></a>' : '')
+    + handlinger + '</article>';
+}
+
+/*
+ * Bilder i feeden ligger kryptert i img/feed/ i det offentlige repoet. Nøkkelen ligger i tabellen
+ * media, som bare innloggede medlemmer kan lese. Nettleseren dekrypterer bildet og viser det som blob.
+ */
+const BILDER = new Map();
+
+function b64TilBytes(b64) {
+  const s = atob(b64);
+  const ut = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) ut[i] = s.charCodeAt(i);
+  return ut;
+}
+
+async function dekrypterBilde(id) {
+  const rader = await api.rest('media?id=eq.' + encodeURIComponent(id) + '&select=id,path,mime,nokkel,iv,alt');
+  const m = rader && rader[0];
+  if (!m || !/^img\/feed\/[a-z0-9]{16,64}\.bin$/.test(m.path)) return null;
+  const svar = await fetch(m.path);
+  if (!svar.ok) return null;
+  const nokkel = await crypto.subtle.importKey('raw', b64TilBytes(m.nokkel), 'AES-GCM', false, ['decrypt']);
+  const data = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64TilBytes(m.iv) }, nokkel, await svar.arrayBuffer());
+  return { url: URL.createObjectURL(new Blob([data], { type: m.mime })), alt: m.alt || '' };
+}
+
+function hentBilde(id) {
+  if (!BILDER.has(id)) BILDER.set(id, dekrypterBilde(id).catch(() => null));
+  return BILDER.get(id);
+}
+
+/* Fyller inn bildene etter at siden er tegnet. */
+function visBilder() {
+  document.querySelectorAll('img[data-bilde]').forEach((img) => {
+    const boks = img.closest('.feed-media');
+    hentBilde(img.dataset.bilde).then((b) => {
+      if (b) {
+        img.alt = b.alt;
+        img.src = b.url;
+        if (boks) boks.classList.add('lastet');
+      } else if (boks) {
+        boks.classList.add('feil');
+      }
+    });
+  });
+}
+
+/* Ett kort i feeden. Videoer spilles i kortet, artikler får et lenkekort, beskjeder har bilde og knapp. */
 function feedKort(i) {
+  if (!i.url) return beskjedKort(i);
   const k = kildeFor(i.url);
   const lenke = ' href="' + esc(i.url) + '" target="_blank" rel="noopener noreferrer"';
   const plakat = (k.bilde ? '<img src="' + esc(k.bilde) + '" alt="" loading="lazy">'
@@ -1492,9 +1559,7 @@ function feedKort(i) {
   const handlinger = [];
   if (erVideo(k)) handlinger.push('<a class="lenkeknapp"' + lenke + '>Åpne i ' + esc(k.navn) + '</a>');
   if (S.profil.role === 'trener') handlinger.push('<button type="button" class="lenkeknapp" data-handling="slett-inspirasjon" data-id="' + esc(i.id) + '">Slett</button>');
-  return '<article class="feed-kort">'
-    + '<header class="feed-hode"><img src="img/kolbotn-logo.png" alt="" width="26" height="32">'
-    + '<span><b>Trenerne i TG1</b><span>' + esc(k.navn + ' · ' + datoUtenAar(osloDatoStr(new Date(i.created_at)))) + '</span></span></header>'
+  return '<article class="feed-kort">' + feedHode(k.navn, i.created_at)
     + media
     + '<div class="feed-tekst"><h3>' + esc(i.title) + '</h3>' + (i.note ? '<p>' + esc(i.note) + '</p>' : '') + '</div>'
     + (erVideo(k) ? '' : '<a class="feed-lenke"' + lenke + '><span>' + esc(k.navn) + '</span><span>Les ' + (k.type === 'artikkel' ? 'artikkelen' : 'mer') + ' ›</span></a>')
@@ -2808,9 +2873,13 @@ async function vedKlikk(e) {
   } else if (h === 'oppdater') {
     location.reload();
   } else if (h === 'slett-inspirasjon') {
-    if (!window.confirm('Slette dette fra Inspirasjon?')) return;
+    if (!window.confirm('Slette innlegget fra feeden?')) return;
+    const innlegg = S.inspirasjon.find((x) => x.id === el.dataset.id);
+    const bilde = innlegg && innlegg.image_id && !S.inspirasjon.some((x) => x.id !== innlegg.id && x.image_id === innlegg.image_id)
+      ? innlegg.image_id : null;
     await utfor(async () => {
       await api.rest('inspiration?id=eq.' + encodeURIComponent(el.dataset.id), { metode: 'DELETE', prefer: 'return=minimal' });
+      if (bilde) await api.rest('media?id=eq.' + encodeURIComponent(bilde), { metode: 'DELETE', prefer: 'return=minimal' }).catch(() => null);
       S.inspirasjon = (await api.rest('inspiration?select=*&order=created_at.desc&limit=200')) || [];
       UI.melding = 'Slettet.';
       tegn();
@@ -2939,6 +3008,7 @@ function tegn() {
   }
   app.innerHTML = html;
   document.title = tittel;
+  visBilder();
   /* Til toppen ved ny side, men ikke når man bare blar mellom uker. */
   const sti = location.hash.replace(/[?&]uke=[^&]*/, '');
   if (sti !== UI.forrigeRute) {

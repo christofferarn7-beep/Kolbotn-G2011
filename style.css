@@ -787,6 +787,19 @@ a.lenkerad:hover { background: #F7FAFC; color: inherit; }
   border-color: transparent transparent transparent #FFFFFF;
 }
 .feed-media.spiller { cursor: default; }
+.feed-media.foto { aspect-ratio: 4 / 5; background: #DCE7F0; cursor: default; }
+.feed-media.foto img { opacity: 0; transition: opacity 0.25s; }
+.feed-media.foto.lastet img { opacity: 1; }
+.feed-media.foto.feil::after {
+  content: "Bildet kunne ikke vises";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dempet);
+  font-size: 14px;
+}
 
 .feed-tekst { padding: 12px 14px 4px; display: flex; flex-direction: column; gap: 6px; }
 .feed-tekst h3 { margin: 0; font-size: 18px; }
